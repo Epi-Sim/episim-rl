@@ -4,7 +4,9 @@ from datetime import datetime, timedelta
 import os
 import json
 import xarray
-#from epi_sim import EpiSim
+import shutil
+import argparse
+
 
 def run_episim():
     "Run steps and update the policy"
@@ -55,10 +57,13 @@ def run_episim():
 
 # Environment Interface
 class CustomEnv:
-    def __init__(self):
+    def __init__(self, run_folder, data_folder, config_dict):
         # Define environment state and action space
         # Episode duration: 1 year (48 weeks)
         # Step: 2 weeks
+        self.run_folder = run_folder
+        self.data_folder = data_folder
+        self.config_dict = config_dict
         self.state_dims = (48, 125, 5, 5, 5, 2)
         # self.state_space = 6  # State is a vector of size six [weeks(1-48), previous_actions(1-125), ICU_stress(1-5), disease_spread(1-5), dis_severity(1-5), R0(0/1)]
         self.action_space = 125  # 125 possible actions [\Phi0(0,0.25,0.5,0.75,1), delta(0,0.25,0.5,0.75,1), k0(0,0.25,0.5,0.75,1)]
@@ -87,49 +92,60 @@ class CustomEnv:
         # Invoke the simulator:
         # subprocess.call(['python3', 'src/epi_sim.py'])
         # determine week no.
-
-        # Convert action to the corresponding parameters in the .json file
-
-        # Invoke the simulator with that .json file
-
-        # Read the output and proceed
-
         util = Utils()
-        #cf = util.get_most_recent_folder(os.path.join("","test"))
-        #print(f"ID of current exp: {cf}")
-        #f = open(os.path.join(os.pardir,f"runs/{cf}/config_auto_py.json"))
-        base_path = "/home/imartin3/Documents/Epi-Sim/episim-rl"
-        f = open("/home/imartin3/Documents/Epi-Sim/episim-rl/test/config/config_MMCACovid19.json")
-        temp_conf = json.load(f)
-        week_state = util.get_week_number(temp_conf['simulation']['start_date'])
+
+        week_state = util.get_week_number(config_dict['simulation']['start_date'])
         print(f"Week no: {week_state}")
         # HERE 17-12-2024
         # subprocess.call(['python3', 'src/epi_sim.py'])
 
-        with open(f"{base_path}/test/config/config_{week_state}.json", "w") as f:
-            json.dump(temp_conf, f, indent=4)
         
-        
-        exec_path = f"julia --project={base_path}/model/EpiSim.jl"
-        params_strn = f"{base_path}/model/EpiSim.jl/src/run.jl run -c test/config/config_MMCACovid19.json -d test/data/ -i test/"
-            
-        aux = f"{exec_path} {params_strn}"
-        subprocess.run(aux, shell=True)
-        
-	    #subprocess.call(['./episim', '-e', 'MMCACovid19', 'run', '-c', 'models/mitma/config.json', '-d', 'models/mitma/', '--initial-condition', 'models/mitma/initial_conditions_MMCACovid19.nc'])
-        #run_episim()
+        # Convert action to the corresponding parameters in the .json file
 
+        if action is None:
+            config_dict["NPI"]["κ₀s"]: [0.0]
+            config_dict["NPI"]["ϕs"]: [0.2]
+            config_dict["NPI"]["δs"]: [0.8]
+            config_dict["NPI"]["tᶜs"]: [1]
+        else:
+            # Convert action to the corresponding parameters in the .json file
+            action = np.unravel_index(action, (5, 5, 5))
+            config_dict["NPI"]["κ₀s"]: [action[0] * 0.25]
+            config_dict["NPI"]["ϕs"]: [action[1] * 0.25]
+            config_dict["NPI"]["δs"]: [action[2] * 0.25]
+            config_dict["NPI"]["tᶜs"]: [1]
+		
+        # Invoke the simulator with that .json file
+
+        config_fname = os.path.join(self.run_folder, f"config_{week_state}.json")
+        with open(config_fname, "w") as fh:
+            json.dump(config_dict, fh, indent=4)
+
+        params_strn = f"-c {config_fname} -d {self.data_folder} -i {self.run_folder}"
+            
+        command = f"{exec_path} run {params_strn}"
+        subprocess.run(command, shell=True)
+
+        # Read the output and proceed
+
+        # read the output observables and computes the reward
         self.state = tuple(np.random.randint(dim) for dim in self.state_dims) #TODO: run simulator and get NEXT state
         reward = np.random.randn()  # Example: Random reward #TODO: run simulator and get reward
         done = np.random.rand() > 0.95  # Example: Randomly ends the episode #TODO: run simulator and get determine if it is week 48
 
-        new_start_day = temp_conf['simulation']['end_date']
-        temp_conf['simulation']['start_date'] = new_start_day        
-        temp_conf['simulation']['end_date'] = (datetime.strptime(new_start_day, "%Y-%m-%d") + timedelta(days=14)).strftime("%Y-%m-%d")
-        temp_conf['data']['initial_condition_filename'] = f"../output/compartments_t_{new_start_day}.nc"
+        # UPDATE DATES
 
-        with open(f"{base_path}/test/config/config_MMCACovid19.json", "w") as f:
-            json.dump(temp_conf, f, indent=4)
+        new_start_day = config_dict['simulation']['end_date']
+        config_dict['simulation']['start_date'] = new_start_day
+        new_end_date = (datetime.strptime(new_start_day, "%Y-%m-%d") + timedelta(days=14)).strftime("%Y-%m-%d")
+        config_dict['simulation']['end_date'] = new_end_date
+
+        initial_condition_filename = os.path.join(self.run_folder, "output" f"compartments_t_{new_start_day}.nc")
+        config_dict['data']['initial_condition_filename'] = initial_condition_filename       
+ 
+        #cf = util.get_most_recent_folder(os.path.join("","test"))
+        #print(f"ID of current exp: {cf}")
+        #f = open(os.path.join(os.pardir,f"runs/{cf}/config_auto_py.json"))
 
         return self.state, reward, done
 
@@ -291,8 +307,51 @@ class Utils:
             return None
 
 
+
+
+def create_parser():
+    parser = argparse.ArgumentParser(description=f"Run the EpiSim simulator.")
+    parser.add_argument("experiment_id", action="store", dest="experiment_id", help="ID of the experiment")
+    parser.add_argument("--config", action="store", dest="config_file", help="Path to the configuration file")
+    parser.add_argument("--data", action="store", dest="data_folder", help="Folder where the data is stored")
+    parser.add_argument("--period", action="store", dest="evaluation_period", 
+                        help="Evaluation period", type=int default=14)
+    return parser
+
+
 # Initialize and run
+
 if __name__ == "__main__":
-    env = CustomEnv()
+    global exec_path
+
+    parser = create_parser()
+    parser.parse_args()
+    args = parser.parse_args()
+
+    base_folder = os.path.abspath(os.pardir(os.curdir))
+    exec_path = os.path.join(base_folder, "model/EpiSim.jl/src/run.jl")
+
+    experiment_id = args.experiment_id
+    data_folder = args.data_folder
+    config_file = args.config_file
+    evaluation_period = int(args.evaluation_period)
+
+    assert evaluation_period > 0, "The evaluation period must be a positive integer."
+    assert evaluation_period <= 336, "The evaluation period must be less than or equal to 48 weeks."
+    assert os.path.exists(config_file), "The configuration file does not exist."
+    assert os.path.exists(data_folder), "The data folder does not exist."
+
+    with open(config_file, 'r') as f:
+        config_dict = json.load
+
+    config_dict['simulation']['save_time_step'] = -1
+    config_dict['simulation']['start_date'] = "2020-02-09"
+    end_date = (datetime.strptime(config_dict['simulation']['start_date'], "%Y-%m-%d") + timedelta(days=evaluation_period)).strftime("%Y-%m-%d")
+    config_dict['simulation']['end_date'] = end_date
+
+    exp_folder = os.path.join("runs", experiment_id)
+    os.makedirs(exp_folder, exist_ok=True)
+
+    env = CustomEnv(exp_folder=exp_folder, config_dict=config_dict)
     agent = RLAgent(state_dims=env.state_dims, action_space=env.action_space)
     train_agent(env, agent, episodes=2)
