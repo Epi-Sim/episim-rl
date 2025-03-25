@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import os
 import json
 import xarray
-from epi_sim import EpiSim
+#from epi_sim import EpiSim
 
 def run_episim():
     "Run steps and update the policy"
@@ -95,20 +95,42 @@ class CustomEnv:
         # Read the output and proceed
 
         util = Utils()
-        cf = util.get_most_recent_folder(os.path.join(os.pardir,'runs'))
-        print(f"ID of current exp: {cf}")
-        f = open(os.path.join(os.pardir,f"runs/{cf}/config_auto_py.json"))
+        #cf = util.get_most_recent_folder(os.path.join("","test"))
+        #print(f"ID of current exp: {cf}")
+        #f = open(os.path.join(os.pardir,f"runs/{cf}/config_auto_py.json"))
+        base_path = "/home/imartin3/Documents/Epi-Sim/episim-rl"
+        f = open("/home/imartin3/Documents/Epi-Sim/episim-rl/test/config/config_MMCACovid19.json")
         temp_conf = json.load(f)
         week_state = util.get_week_number(temp_conf['simulation']['start_date'])
         print(f"Week no: {week_state}")
-    # HERE 17-12-2024
+        # HERE 17-12-2024
         # subprocess.call(['python3', 'src/epi_sim.py'])
-    subprocess.call(['./episim', '-e', 'MMCACovid19', 'run', '-c', 'models/mitma/config.json', '-d', 'models/mitma/', '--initial-condition', 'models/mitma/initial_conditions_MMCACovid19.nc'])
+
+        with open(f"{base_path}/test/config/config_{week_state}.json", "w") as f:
+            json.dump(temp_conf, f, indent=4)
+        
+        
+        exec_path = f"julia --project={base_path}/model/EpiSim.jl"
+        params_strn = f"{base_path}/model/EpiSim.jl/src/run.jl run -c test/config/config_MMCACovid19.json -d test/data/ -i test/"
+            
+        aux = f"{exec_path} {params_strn}"
+        subprocess.run(aux, shell=True)
+        
+	    #subprocess.call(['./episim', '-e', 'MMCACovid19', 'run', '-c', 'models/mitma/config.json', '-d', 'models/mitma/', '--initial-condition', 'models/mitma/initial_conditions_MMCACovid19.nc'])
         #run_episim()
 
         self.state = tuple(np.random.randint(dim) for dim in self.state_dims) #TODO: run simulator and get NEXT state
         reward = np.random.randn()  # Example: Random reward #TODO: run simulator and get reward
         done = np.random.rand() > 0.95  # Example: Randomly ends the episode #TODO: run simulator and get determine if it is week 48
+
+        new_start_day = temp_conf['simulation']['end_date']
+        temp_conf['simulation']['start_date'] = new_start_day        
+        temp_conf['simulation']['end_date'] = (datetime.strptime(new_start_day, "%Y-%m-%d") + timedelta(days=14)).strftime("%Y-%m-%d")
+        temp_conf['data']['initial_condition_filename'] = f"../output/compartments_t_{new_start_day}.nc"
+
+        with open(f"{base_path}/test/config/config_MMCACovid19.json", "w") as f:
+            json.dump(temp_conf, f, indent=4)
+
         return self.state, reward, done
 
     def render(self):
@@ -184,7 +206,7 @@ class RLAgent:
 
 
 # Step 3: Training Loop
-def train_agent(env, agent, episodes=100):
+def train_agent(env, agent, episodes=2):
     for episode in range(episodes):
         state = env.reset()
         total_reward = 0
@@ -273,4 +295,4 @@ class Utils:
 if __name__ == "__main__":
     env = CustomEnv()
     agent = RLAgent(state_dims=env.state_dims, action_space=env.action_space)
-    train_agent(env, agent, episodes=1000)
+    train_agent(env, agent, episodes=2)
