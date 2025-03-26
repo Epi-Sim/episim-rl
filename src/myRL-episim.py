@@ -3,7 +3,7 @@ import subprocess
 from datetime import datetime, timedelta
 import os
 import json
-import xarray
+import xarray as xr
 import shutil
 import argparse
 
@@ -103,17 +103,17 @@ class CustomEnv:
         # Convert action to the corresponding parameters in the .json file
 
         if action is None:
-            config_dict["NPI"]["κ₀s"]: [0.0]
-            config_dict["NPI"]["ϕs"]: [0.2]
-            config_dict["NPI"]["δs"]: [0.8]
-            config_dict["NPI"]["tᶜs"]: [1]
+            config_dict["NPI"]["κ₀s"] = [0.0]
+            config_dict["NPI"]["ϕs"] = [0.2]
+            config_dict["NPI"]["δs"] = [0.8]
+            config_dict["NPI"]["tᶜs"] = [1]
         else:
             # Convert action to the corresponding parameters in the .json file
             action = np.unravel_index(action, (5, 5, 5))
-            config_dict["NPI"]["κ₀s"]: [action[0] * 0.25]
-            config_dict["NPI"]["ϕs"]: [action[1] * 0.25]
-            config_dict["NPI"]["δs"]: [action[2] * 0.25]
-            config_dict["NPI"]["tᶜs"]: [1]
+            config_dict["NPI"]["κ₀s"] = [action[0] * 0.25]
+            config_dict["NPI"]["ϕs"] = [action[1] * 0.25]
+            config_dict["NPI"]["δs"] = [action[2] * 0.25]
+            config_dict["NPI"]["tᶜs"] = [1]
 		
         # Invoke the simulator with that .json file
 
