@@ -326,7 +326,7 @@ if __name__ == "__main__":
     parser = create_parser()
     args = parser.parse_args()
 
-    base_folder = os.path.abspath(os.pardir(os.curdir))
+    base_folder = os.path.abspath(os.curdir)
     exec_path = os.path.join(base_folder, "model/EpiSim.jl/src/run.jl")
 
     experiment_id = args.experiment_id
