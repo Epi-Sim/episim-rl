@@ -57,10 +57,11 @@ def run_episim():
 
 # Environment Interface
 class CustomEnv:
-    def __init__(self, run_folder, data_folder, config_dict):
+    def __init__(self, base_folder, run_folder, data_folder, config_dict):
         # Define environment state and action space
         # Episode duration: 1 year (48 weeks)
         # Step: 2 weeks
+        self.base_folder = base_folder
         self.run_folder = run_folder
         self.data_folder = data_folder
         self.config_dict = config_dict
@@ -140,8 +141,8 @@ class CustomEnv:
         new_end_date = (datetime.strptime(new_start_day, "%Y-%m-%d") + timedelta(days=14)).strftime("%Y-%m-%d")
         config_dict['simulation']['end_date'] = new_end_date
 
-        initial_condition_filename = os.path.join(self.run_folder, "output" f"compartments_t_{new_start_day}.nc")
-        config_dict['data']['initial_condition_filename'] = initial_condition_filename       
+        initial_condition_filename = os.path.join(self.base_folder, self.run_folder, "output", f"compartments_t_{new_start_day}.nc")
+        config_dict['data']['initial_condition_filename'] = initial_condition_filename
  
         #cf = util.get_most_recent_folder(os.path.join("","test"))
         #print(f"ID of current exp: {cf}")
@@ -350,6 +351,6 @@ if __name__ == "__main__":
     exp_folder = os.path.join("runs", experiment_id)
     os.makedirs(exp_folder, exist_ok=True)
 
-    env = CustomEnv(exp_folder=exp_folder, config_dict=config_dict)
+    env = CustomEnv(base_folder=base_folder, run_folder=exp_folder, data_folder=data_folder, config_dict=config_dict)
     agent = RLAgent(state_dims=env.state_dims, action_space=env.action_space)
     train_agent(env, agent, episodes=2)
