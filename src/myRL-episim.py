@@ -311,11 +311,10 @@ class Utils:
 
 def create_parser():
     parser = argparse.ArgumentParser(description=f"Run the EpiSim simulator.")
-    parser.add_argument("experiment_id", action="store", dest="experiment_id", help="ID of the experiment")
-    parser.add_argument("--config", action="store", dest="config_file", help="Path to the configuration file")
-    parser.add_argument("--data", action="store", dest="data_folder", help="Folder where the data is stored")
-    parser.add_argument("--period", action="store", dest="evaluation_period", 
-                        help="Evaluation period", type=int default=14)
+    parser.add_argument("--experiment_id", action="store", dest="experiment_id", help="ID of the experiment")
+    parser.add_argument("--config", action="store", required=True, dest="config_file", help="Path to the configuration file")
+    parser.add_argument("--data", action="store", required=True, dest="data_folder", help="Folder where the data is stored")
+    parser.add_argument("--period", action="store", dest="evaluation_period", help="Evaluation period", type=int, default=14)
     return parser
 
 
@@ -325,7 +324,6 @@ if __name__ == "__main__":
     global exec_path
 
     parser = create_parser()
-    parser.parse_args()
     args = parser.parse_args()
 
     base_folder = os.path.abspath(os.pardir(os.curdir))
