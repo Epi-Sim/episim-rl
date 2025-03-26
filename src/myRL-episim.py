@@ -124,7 +124,7 @@ class CustomEnv:
 
         params_strn = f"-c {config_fname} -d {self.data_folder} -i {self.run_folder}"
             
-        command = f"{exec_path} run {params_strn}"
+        command = f"julia {exec_path} run {params_strn}"
         subprocess.run(command, shell=True)
 
         # Read the output and proceed
@@ -341,7 +341,7 @@ if __name__ == "__main__":
     assert os.path.exists(data_folder), "The data folder does not exist."
 
     with open(config_file, 'r') as f:
-        config_dict = json.load
+        config_dict = json.load(f)
 
     config_dict['simulation']['save_time_step'] = -1
     config_dict['simulation']['start_date'] = "2020-02-09"
