@@ -3,6 +3,7 @@ import subprocess
 from datetime import datetime, timedelta
 import os
 import json
+import pandas as pd
 import xarray as xr
 import shutil
 import argparse
@@ -52,12 +53,34 @@ def run_episim():
     logger.info("Example done")
 
 
+#function that maps values of the observables to the state space 1-5 or 1-2
+def map_observables_to_state_space(value, map_dict):
+    thresholds = {int(k): v for k, v in map_dict.items()}  # Convert keys to integers
+    sorted_thresholds = sorted(thresholds.items())  # Sort thresholds
+    
+    new_value = 1  # Default to the lowest category
+    for threshold, category in sorted_thresholds:
+        if value >= threshold:
+            new_value = category
+        else:
+            break
+    return new_value
+    
+
+def map_to_action(data_folder, action):
+    fname = os.path.join(data_folder, "map_action.csv")
+    df = pd.read_csv(fname, index_col='action')
+    return df.loc[action]
+
+#create a function that creates the action space id and map it to the possible actions
+#action is the id
+
 
 
 
 # Environment Interface
 class CustomEnv:
-    def __init__(self, base_folder, run_folder, data_folder, config_dict):
+    def __init__(self, base_folder, run_folder, data_folder, config_dict, categories_dict):
         # Define environment state and action space
         # Episode duration: 1 year (48 weeks)
         # Step: 2 weeks
@@ -65,8 +88,9 @@ class CustomEnv:
         self.run_folder = run_folder
         self.data_folder = data_folder
         self.config_dict = config_dict
+        self.categories_dict = categories_dict
         self.state_dims = (48, 125, 5, 5, 5, 2)
-        # self.state_space = 6  # State is a vector of size six [weeks(1-48), previous_actions(1-125), ICU_stress(1-5), disease_spread(1-5), dis_severity(1-5), R0(0/1)]
+        self.state_space = 6  # State is a vector of size six [weeks(1-48), previous_actions(1-125), ICU_stress(1-5), disease_spread(1-5), dis_severity(1-5), R0(0/1)]
         self.action_space = 125  # 125 possible actions [\Phi0(0,0.25,0.5,0.75,1), delta(0,0.25,0.5,0.75,1), k0(0,0.25,0.5,0.75,1)]
         self.state = None
 
@@ -102,19 +126,12 @@ class CustomEnv:
 
         
         # Convert action to the corresponding parameters in the .json file
-
-        if action is None:
-            config_dict["NPI"]["κ₀s"] = [0.0]
-            config_dict["NPI"]["ϕs"] = [0.2]
-            config_dict["NPI"]["δs"] = [0.8]
-            config_dict["NPI"]["tᶜs"] = [1]
-        else:
-            # Convert action to the corresponding parameters in the .json file
-            action = np.unravel_index(action, (5, 5, 5))
-            config_dict["NPI"]["κ₀s"] = [action[0] * 0.25]
-            config_dict["NPI"]["ϕs"] = [action[1] * 0.25]
-            config_dict["NPI"]["δs"] = [action[2] * 0.25]
-            config_dict["NPI"]["tᶜs"] = [1]
+        #APPLY ACTION
+        #TODO I think that in the first two weeks no action has to be made
+        action_values = map_to_action(data_folder, action)
+        config_dict["NPI"]["κ₀s"]= [float(action_values['k0'])]
+        config_dict["NPI"]["ϕs"]= [float(action_values['phi'])]
+        config_dict["NPI"]["δs"]= [float(action_values['delta'])]
 		
         # Invoke the simulator with that .json file
 
@@ -129,12 +146,33 @@ class CustomEnv:
 
         # Read the output and proceed
 
-        # read the output observables and computes the reward
-        self.state = tuple(np.random.randint(dim) for dim in self.state_dims) #TODO: run simulator and get NEXT state
-        reward = np.random.randn()  # Example: Random reward #TODO: run simulator and get reward
-        done = np.random.rand() > 0.95  # Example: Randomly ends the episode #TODO: run simulator and get determine if it is week 48
 
-        # UPDATE DATES
+        # read the output observables and computes the reward
+
+        observables_xa = xr.open_dataset(os.path.join(self.run_folder, "output", "observables.nc"))
+        ICU_stress = float(observables_xa["new_hospitalized"].sum(['G','M','T']).values)
+        disease_spread = float(observables_xa["new_infected"].sum(['G','M','T']).values)
+        dis_severity = float(observables_xa["new_deaths"].sum(['G','M','T']).values)
+        R0 = float(observables_xa["R_eff"].mean(['G','M','T']).values)
+        
+
+
+        ICU_stress = map_observables_to_state_space(ICU_stress, categories_dict['ICU_stress'])
+        disease_spread = map_observables_to_state_space(disease_spread, categories_dict['disease_spread'])
+        dis_severity = map_observables_to_state_space(dis_severity, categories_dict['dis_severity'])
+        R0 = map_observables_to_state_space(R0, categories_dict['R0'])
+
+        action = np.random.randint(125)
+        self.state = (week_state, action, ICU_stress, disease_spread, dis_severity, R0)
+        
+        reward = -(ICU_stress * disease_spread * dis_severity)
+        #self.state = tuple(np.random.randint(dim) for dim in self.state_dims) #TODO: run simulator and get NEXT state
+
+        #TODO store each value to make a plot of the reward
+        
+        #done has to be true when week 48
+        #done = np.random.rand() > 0.95  # Example: Randomly ends the episode #TODO: run simulator and get determine if it is week 48
+        done = False
 
         new_start_day = config_dict['simulation']['end_date']
         config_dict['simulation']['start_date'] = new_start_day
@@ -143,6 +181,8 @@ class CustomEnv:
 
         initial_condition_filename = os.path.join(self.base_folder, self.run_folder, "output", f"compartments_t_{new_start_day}.nc")
         config_dict['data']['initial_condition_filename'] = initial_condition_filename
+
+        
  
         #cf = util.get_most_recent_folder(os.path.join("","test"))
         #print(f"ID of current exp: {cf}")
@@ -362,6 +402,6 @@ if __name__ == "__main__":
     exp_folder = os.path.join("runs", experiment_id)
     os.makedirs(exp_folder, exist_ok=True)
 
-    env = CustomEnv(base_folder=base_folder, run_folder=exp_folder, data_folder=data_folder, config_dict=config_dict)
+    env = CustomEnv(base_folder=base_folder, run_folder=exp_folder, data_folder=data_folder, config_dict=config_dict, categories_dict=categories_dict)
     agent = RLAgent(state_dims=env.state_dims, action_space=env.action_space)
-    train_agent(env, agent, episodes=2)
+    train_agent(env, agent, episodes=1)
