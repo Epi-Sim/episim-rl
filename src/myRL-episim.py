@@ -343,10 +343,21 @@ if __name__ == "__main__":
     with open(config_file, 'r') as f:
         config_dict = json.load(f)
 
-    config_dict['simulation']['save_time_step'] = -1
-    config_dict['simulation']['start_date'] = "2020-02-09"
-    end_date = (datetime.strptime(config_dict['simulation']['start_date'], "%Y-%m-%d") + timedelta(days=evaluation_period)).strftime("%Y-%m-%d")
-    config_dict['simulation']['end_date'] = end_date
+    #This can be done in a function
+
+    config_dict["simulation"]["save_time_step"] = -1
+    config_dict["simulation"]["start_date"] = "2020-02-09"
+    end_date = (datetime.strptime(config_dict["simulation"]["start_date"], "%Y-%m-%d") + timedelta(days=evaluation_period)).strftime("%Y-%m-%d")
+    config_dict["simulation"]["end_date"] = end_date
+    
+    config_dict["NPI"]["κ₀s"]= [0]
+    config_dict["NPI"]["ϕs"]= [0.2]
+    config_dict["NPI"]["δs"]= [0]
+    config_dict["NPI"]["tᶜs"]= [1]
+
+    categorization_fname = os.path.join(data_folder,"observables_categories.json")
+    with open(categorization_fname, "r") as f:
+            categories_dict = json.load(f)
 
     exp_folder = os.path.join("runs", experiment_id)
     os.makedirs(exp_folder, exist_ok=True)
