@@ -53,7 +53,7 @@ def run_episim():
     logger.info("Example done")
 
 
-#function that maps values of the observables to the state space 1-5 or 1-2
+#function that maps values of the observables to the state space 1-5 or 0-1
 def map_observables_to_state_space(value, map_dict):
     thresholds = {int(k): v for k, v in map_dict.items()}  # Convert keys to integers
     sorted_thresholds = sorted(thresholds.items())  # Sort thresholds
@@ -128,10 +128,14 @@ class CustomEnv:
         # Convert action to the corresponding parameters in the .json file
         #APPLY ACTION
         #TODO I think that in the first two weeks no action has to be made
-        action_values = map_to_action(data_folder, action)
-        config_dict["NPI"]["κ₀s"]= [float(action_values['k0'])]
-        config_dict["NPI"]["ϕs"]= [float(action_values['phi'])]
-        config_dict["NPI"]["δs"]= [float(action_values['delta'])]
+        if week_state > 6:
+            action_values = map_to_action(data_folder, action)
+            config_dict["NPI"]["κ₀s"]= [float(action_values['k0'])]
+            config_dict["NPI"]["ϕs"]= [float(action_values['phi'])]
+            config_dict["NPI"]["δs"]= [float(action_values['delta'])]
+       # else:
+            #TODO: What values is supposed to have action in the first two weeks?
+            #action = np.random.randint(125)
 		
         # Invoke the simulator with that .json file
 
@@ -145,7 +149,11 @@ class CustomEnv:
         subprocess.run(command, shell=True)
 
         # Read the output and proceed
+        last_day = config_dict['simulation']['end_date']
 
+        population_fname = os.path.join(data_folder, config_dict['data']['metapopulation_data_filename'])
+        population = pd.read_csv(population_fname, index_col = 'id', usecols = ["id", "Y", "M", "O"])
+        total_population = population[['Y', 'M', 'O']].sum().sum()
 
         # read the output observables and computes the reward
 
@@ -153,16 +161,16 @@ class CustomEnv:
         ICU_stress = float(observables_xa["new_hospitalized"].sum(['G','M','T']).values)
         disease_spread = float(observables_xa["new_infected"].sum(['G','M','T']).values)
         dis_severity = float(observables_xa["new_deaths"].sum(['G','M','T']).values)
-        R0 = float(observables_xa["R_eff"].mean(['G','M','T']).values)
+        R0_xa = observables_xa["R_eff"].sel(T=last_day)* population/total_population
+        R0 = float(R0_xa.sum(['G', 'M']).values)
         
-
 
         ICU_stress = map_observables_to_state_space(ICU_stress, categories_dict['ICU_stress'])
         disease_spread = map_observables_to_state_space(disease_spread, categories_dict['disease_spread'])
         dis_severity = map_observables_to_state_space(dis_severity, categories_dict['dis_severity'])
         R0 = map_observables_to_state_space(R0, categories_dict['R0'])
 
-        action = np.random.randint(125)
+        #action = np.random.randint(125)
         self.state = (week_state, action, ICU_stress, disease_spread, dis_severity, R0)
         
         reward = -(ICU_stress * disease_spread * dis_severity)
