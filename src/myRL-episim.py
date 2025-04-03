@@ -120,7 +120,7 @@ class CustomEnv:
         # determine week no.
         util = Utils()
 
-        week_state = util.get_week_number(config_dict['simulation']['start_date'])
+        week_state = util.get_week_number(config_dict['simulation']['start_date']) - 1
         print(f"Week no: {week_state}")
         # HERE 17-12-2024
         # subprocess.call(['python3', 'src/epi_sim.py'])
@@ -165,17 +165,21 @@ class CustomEnv:
         dis_severity = float(observables_xa["new_deaths"].sum(['G','M','T']).values)
         R0_xa = observables_xa["R_eff"].sel(T=last_day)* population/total_population
         R0 = float(R0_xa.sum(['G', 'M']).values)
-        
+    
+        reward = -(ICU_stress + disease_spread + dis_severity)
+        print(f"reward: {reward}")
 
         ICU_stress = map_observables_to_state_space(ICU_stress, categories_dict['ICU_stress'])
         disease_spread = map_observables_to_state_space(disease_spread, categories_dict['disease_spread'])
         dis_severity = map_observables_to_state_space(dis_severity, categories_dict['dis_severity'])
         R0 = map_observables_to_state_space(R0, categories_dict['R0'])
 
+        print(f"ICU_stress: {ICU_stress}, disease_spread: {disease_spread}, dis_severity: {dis_severity}, R0: {R0}")
+        
         #action = np.random.randint(125)
         self.state = (week_state, action, ICU_stress, disease_spread, dis_severity, R0)
         
-        reward = -(ICU_stress * disease_spread * dis_severity)
+        
         #self.state = tuple(np.random.randint(dim) for dim in self.state_dims) #TODO: run simulator and get NEXT state
 
         #TODO store each value to make a plot of the reward
