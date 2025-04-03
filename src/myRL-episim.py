@@ -93,6 +93,7 @@ class CustomEnv:
         self.state_space = 6  # State is a vector of size six [weeks(1-48), previous_actions(1-125), ICU_stress(1-5), disease_spread(1-5), dis_severity(1-5), R0(0/1)]
         self.action_space = 125  # 125 possible actions [\Phi0(0,0.25,0.5,0.75,1), delta(0,0.25,0.5,0.75,1), k0(0,0.25,0.5,0.75,1)]
         self.state = None
+        self.steps = 0
 
     def reset(self):
         """
@@ -128,7 +129,8 @@ class CustomEnv:
         # Convert action to the corresponding parameters in the .json file
         #APPLY ACTION
         #TODO I think that in the first two weeks no action has to be made
-        if week_state > 6:
+        #if week_state > 6:
+        if self.steps > 0:
             action_values = map_to_action(data_folder, action)
             config_dict["NPI"]["κ₀s"]= [float(action_values['k0'])]
             config_dict["NPI"]["ϕs"]= [float(action_values['phi'])]
@@ -190,7 +192,7 @@ class CustomEnv:
         initial_condition_filename = os.path.join(self.base_folder, self.run_folder, "output", f"compartments_t_{new_start_day}.nc")
         config_dict['data']['initial_condition_filename'] = initial_condition_filename
 
-        
+        self.steps = self.steps + 1
  
         #cf = util.get_most_recent_folder(os.path.join("","test"))
         #print(f"ID of current exp: {cf}")
@@ -257,7 +259,10 @@ class RLAgent:
         # discretized_next_state = self.discretize_state(next_state)
 
         # TD Target
-        max_next_q = np.max(self.q_table[next_state]) if not done else 0
+        try:
+            max_next_q = np.max(self.q_table[next_state]) if not done else 0
+        except IndexError:
+            max_next_q = 0
         td_target = reward + self.gamma * max_next_q
 
         # TD Update
@@ -281,12 +286,14 @@ def train_agent(env, agent, episodes=2):
             env.render()
             action = agent.select_action(state)
             next_state, reward, done = env.step(action)
+            print(f"**-- Selected action: {action}, Next state: {next_state}, Reward: {reward}")
             agent.learn(state, action, reward, next_state, done)
             state = next_state
             total_reward += reward
+            print(f"**** Episode {episode + 1} (Step {env.steps}): Reward = {reward:.2f}, Total Reward = {total_reward:.2f}, Epsilon = {agent.epsilon:.3f}")
 
         agent.decay_epsilon()
-        print(f"Episode {episode + 1}: Total Reward = {total_reward:.2f}, Epsilon = {agent.epsilon:.3f}")
+        print(f"**** Episode {episode + 1}: Total Reward = {total_reward:.2f}, Epsilon = {agent.epsilon:.3f}")
 
 
 class Utils:
