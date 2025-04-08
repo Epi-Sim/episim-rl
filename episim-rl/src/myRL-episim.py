@@ -95,6 +95,12 @@ class CustomEnv:
         self.state = None
         self.steps = 0
 
+
+        # Initial values, used for resetting
+        self.config_dict_init = config_dict
+        
+
+
     def reset(self):
         """
         Resets the environment to the initial state.
@@ -102,7 +108,82 @@ class CustomEnv:
             state (numpy array): The initial state.
         """
         self.state =  tuple(np.random.randint(dim) for dim in self.state_dims) #TODO: run simulator and get INIT state
+
+       #  print(f"Resetting...")
+        
+
+        
+       #  self.config_dict = self.config_dict_init
+       #  self.steps = 0
+
+
+       #  util = Utils()
+
+       #  # week_state = util.get_week_number(config_dict['simulation']['start_date']) - 1
+       #  week_state = 5
+       #  print(f"Week no: {week_state}")
+       #  # HERE 17-12-2024
+       #  # subprocess.call(['python3', 'src/epi_sim.py'])
+
+        
+       #  # Convert action to the corresponding parameters in the .json file
+       #  #APPLY ACTION
+       #  #TODO I think that in the first two weeks no action has to be made
+       #  #if week_state > 6:
+       #  if self.steps > 0:
+       #      action_values = map_to_action(data_folder, action)
+       #      config_dict["NPI"]["κ₀s"]= [float(action_values['k0'])]
+       #      config_dict["NPI"]["ϕs"]= [float(action_values['phi'])]
+       #      config_dict["NPI"]["δs"]= [float(action_values['delta'])]
+       #      print(f"**-- selected action: {action}, maps to: {action_values}")
+       # # else:
+       #      #TODO: What values is supposed to have action in the first two weeks?
+       #      #action = np.random.randint(125)
+        
+       #  # Invoke the simulator with that .json file
+
+       #  config_fname = os.path.join(self.run_folder, f"config_{week_state}.json")
+       #  with open(config_fname, "w") as fh:
+       #      json.dump(config_dict, fh, indent=4)
+
+       #  params_strn = f"-c {config_fname} -d {self.data_folder} -i {self.run_folder}"
+            
+       #  command = f"julia {exec_path} run {params_strn}"
+       #  subprocess.run(command, shell=True)
+
+       #  # Read the output and proceed
+       #  last_day = config_dict['simulation']['end_date']
+
+       #  population_fname = os.path.join(data_folder, config_dict['data']['metapopulation_data_filename'])
+       #  population = pd.read_csv(population_fname, index_col = 'id', usecols = ["id", "Y", "M", "O"])
+       #  total_population = population[['Y', 'M', 'O']].sum().sum()
+
+       #  # read the output observables and computes the reward
+
+       #  observables_xa = xr.open_dataset(os.path.join(self.run_folder, "output", "observables.nc"))
+       #  ICU_stress = float(observables_xa["new_hospitalized"].sum(['G','M','T']).values)
+       #  disease_spread = float(observables_xa["new_infected"].sum(['G','M','T']).values)
+       #  dis_severity = float(observables_xa["new_deaths"].sum(['G','M','T']).values)
+       #  R0_xa = observables_xa["R_eff"].sel(T=last_day)* population/total_population
+       #  R0 = float(R0_xa.sum(['G', 'M']).values)
+    
+       #  reward = -(ICU_stress + disease_spread + dis_severity)
+       #  print(f"reward: {reward}")
+
+       #  ICU_stress = map_observables_to_state_space(ICU_stress, categories_dict['ICU_stress'])
+       #  disease_spread = map_observables_to_state_space(disease_spread, categories_dict['disease_spread'])
+       #  dis_severity = map_observables_to_state_space(dis_severity, categories_dict['dis_severity'])
+       #  R0 = map_observables_to_state_space(R0, categories_dict['R0'])
+
+       #  print(f"ICU_stress: {ICU_stress}, disease_spread: {disease_spread}, dis_severity: {dis_severity}, R0: {R0}")
+        
+       #  #action = np.random.randint(125)
+       #  self.state = (week_state, 0, ICU_stress, disease_spread, dis_severity, R0)
         return self.state
+
+
+
+
 
     def step(self, action):
         """
@@ -135,6 +216,7 @@ class CustomEnv:
             config_dict["NPI"]["κ₀s"]= [float(action_values['k0'])]
             config_dict["NPI"]["ϕs"]= [float(action_values['phi'])]
             config_dict["NPI"]["δs"]= [float(action_values['delta'])]
+            print(f"**-- selected action: {action}, maps to: {action_values}")
        # else:
             #TODO: What values is supposed to have action in the first two weeks?
             #action = np.random.randint(125)
@@ -187,6 +269,9 @@ class CustomEnv:
         #done has to be true when week 48
         #done = np.random.rand() > 0.95  # Example: Randomly ends the episode #TODO: run simulator and get determine if it is week 48
         done = False
+        # if week_state==47:
+        if int(week_state) >= 47:
+            done = True
 
         new_start_day = config_dict['simulation']['end_date']
         config_dict['simulation']['start_date'] = new_start_day
@@ -245,8 +330,10 @@ class RLAgent:
             action (int): Chosen action.
         """
         if np.random.rand() < self.epsilon:
+            print(f"Random action selected")
             return np.random.randint(0, self.action_space)  # Explore
         else:
+            print(f"Best action selected")
             return np.argmax(self.q_table[state])  # Exploit
 
     def learn(self, state, action, reward, next_state, done):
@@ -311,9 +398,11 @@ class Utils:
         Returns:
             int: The week number (1-48).
         """
+        # TODO: make sure the date ranges are correct!
+
         # Ensure the date is in 2020
         year_start = datetime(2020, 1, 1)
-        year_end = datetime(2020, 12, 31)
+        year_end = datetime(2022, 2, 28)
 
         # Parse the input date
         try:
@@ -322,7 +411,7 @@ class Utils:
             raise ValueError("Invalid date format. Use YYYY-MM-DD.")
 
         if not (year_start <= date <= year_end):
-            raise ValueError("Date is out of range. Provide a date between 2020-01-01 and 2020-12-31.")
+            raise ValueError("Date is out of range. Provide a date between 2020-01-01 and 2022-2-28.") 
         
         # Calculate the difference in days from the start of the year
         day_difference = (date - year_start).days
@@ -330,8 +419,8 @@ class Utils:
         # Determine the week number (1-based index)
         week_number = day_difference // 7 + 1
         
-        if week_number > 48:
-            raise ValueError("The date exceeds the 48th week of 2020.")
+        if week_number > 50:
+            raise ValueError("The date exceeds the 49th week of the designated period 2020-01-01 to 2022-2-28.")
         
         return week_number
 
@@ -423,4 +512,4 @@ if __name__ == "__main__":
 
     env = CustomEnv(base_folder=base_folder, run_folder=exp_folder, data_folder=data_folder, config_dict=config_dict, categories_dict=categories_dict)
     agent = RLAgent(state_dims=env.state_dims, action_space=env.action_space)
-    train_agent(env, agent, episodes=1)
+    train_agent(env, agent, episodes=10)
