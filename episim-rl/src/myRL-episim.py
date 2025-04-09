@@ -7,6 +7,7 @@ import pandas as pd
 import xarray as xr
 import shutil
 import argparse
+import copy
 
 
 def run_episim():
@@ -80,7 +81,7 @@ def map_to_action(data_folder, action):
 
 # Environment Interface
 class CustomEnv:
-    def __init__(self, base_folder, run_folder, data_folder, config_dict, categories_dict):
+    def __init__(self, base_folder, run_folder, data_folder, config_dict, categories_dict, episode_length, config_file):
         # Define environment state and action space
         # Episode duration: 1 year (48 weeks)
         # Step: 2 weeks
@@ -94,98 +95,62 @@ class CustomEnv:
         self.action_space = 125  # 125 possible actions [\Phi0(0,0.25,0.5,0.75,1), delta(0,0.25,0.5,0.75,1), k0(0,0.25,0.5,0.75,1)]
         self.state = None
         self.steps = 0
+        self.episode_length = episode_length
+        self.config_file = config_file
 
 
-        # Initial values, used for resetting
-        self.config_dict_init = config_dict
+        # # Initial values, used for resetting
+        # self.config_dict_init = copy.deepcopy(config_dict)
         
 
 
-    def reset(self):
+    def reset(self, episode):
         """
         Resets the environment to the initial state.
         Returns:
             state (numpy array): The initial state.
         """
-        self.state =  tuple(np.random.randint(dim) for dim in self.state_dims) #TODO: run simulator and get INIT state
+        # self.state =  tuple(np.random.randint(dim) for dim in self.state_dims) #TODO: run simulator and get INIT state
 
-       #  print(f"Resetting...")
+        print(f"Resetting...")
         
 
         
-       #  self.config_dict = self.config_dict_init
-       #  self.steps = 0
+        # self.config_dict = copy.deepcopy(self.config_dict_init)
+        self.steps = 0
+        # config_dict = self.config_dict
 
-
-       #  util = Utils()
-
-       #  # week_state = util.get_week_number(config_dict['simulation']['start_date']) - 1
-       #  week_state = 5
-       #  print(f"Week no: {week_state}")
-       #  # HERE 17-12-2024
-       #  # subprocess.call(['python3', 'src/epi_sim.py'])
+        util = Utils()
+       
+        #  # week_state = util.get_week_number(config_dict['simulation']['start_date']) - 1
+        week_state = 5
+        print(f"Resetting... Week no: {week_state}")
+        # util.empty_config_folder(self.run_folder)        
+        self.state = (week_state, 0, 0, 0, 0, 0)
+        with open(self.config_file, 'r') as f:
+            config_dict_up = json.load(f)
+            # config_dict['simulation']['start_date'] = config_dict_up['simulation']['start_date']
+            # TODO
+            config_dict['simulation']['start_date'] = "2020-02-09"
+            new_start_day = config_dict['simulation']['start_date']
+            new_end_date = (datetime.strptime(new_start_day, "%Y-%m-%d") + timedelta(days=14)).strftime("%Y-%m-%d")
+            config_dict['simulation']['end_date'] = new_end_date
+            config_dict["NPI"]["κ₀s"]= [0]
+            config_dict["NPI"]["ϕs"]= [0.2]
+            config_dict["NPI"]["δs"]= [0]
+            config_dict["NPI"]["tᶜs"]= [1]
+            config_dict['data']['initial_condition_filename'] = config_dict_up['data']['initial_condition_filename']
 
         
-       #  # Convert action to the corresponding parameters in the .json file
-       #  #APPLY ACTION
-       #  #TODO I think that in the first two weeks no action has to be made
-       #  #if week_state > 6:
-       #  if self.steps > 0:
-       #      action_values = map_to_action(data_folder, action)
-       #      config_dict["NPI"]["κ₀s"]= [float(action_values['k0'])]
-       #      config_dict["NPI"]["ϕs"]= [float(action_values['phi'])]
-       #      config_dict["NPI"]["δs"]= [float(action_values['delta'])]
-       #      print(f"**-- selected action: {action}, maps to: {action_values}")
-       # # else:
-       #      #TODO: What values is supposed to have action in the first two weeks?
-       #      #action = np.random.randint(125)
         
-       #  # Invoke the simulator with that .json file
 
-       #  config_fname = os.path.join(self.run_folder, f"config_{week_state}.json")
-       #  with open(config_fname, "w") as fh:
-       #      json.dump(config_dict, fh, indent=4)
-
-       #  params_strn = f"-c {config_fname} -d {self.data_folder} -i {self.run_folder}"
-            
-       #  command = f"julia {exec_path} run {params_strn}"
-       #  subprocess.run(command, shell=True)
-
-       #  # Read the output and proceed
-       #  last_day = config_dict['simulation']['end_date']
-
-       #  population_fname = os.path.join(data_folder, config_dict['data']['metapopulation_data_filename'])
-       #  population = pd.read_csv(population_fname, index_col = 'id', usecols = ["id", "Y", "M", "O"])
-       #  total_population = population[['Y', 'M', 'O']].sum().sum()
-
-       #  # read the output observables and computes the reward
-
-       #  observables_xa = xr.open_dataset(os.path.join(self.run_folder, "output", "observables.nc"))
-       #  ICU_stress = float(observables_xa["new_hospitalized"].sum(['G','M','T']).values)
-       #  disease_spread = float(observables_xa["new_infected"].sum(['G','M','T']).values)
-       #  dis_severity = float(observables_xa["new_deaths"].sum(['G','M','T']).values)
-       #  R0_xa = observables_xa["R_eff"].sel(T=last_day)* population/total_population
-       #  R0 = float(R0_xa.sum(['G', 'M']).values)
-    
-       #  reward = -(ICU_stress + disease_spread + dis_severity)
-       #  print(f"reward: {reward}")
-
-       #  ICU_stress = map_observables_to_state_space(ICU_stress, categories_dict['ICU_stress'])
-       #  disease_spread = map_observables_to_state_space(disease_spread, categories_dict['disease_spread'])
-       #  dis_severity = map_observables_to_state_space(dis_severity, categories_dict['dis_severity'])
-       #  R0 = map_observables_to_state_space(R0, categories_dict['R0'])
-
-       #  print(f"ICU_stress: {ICU_stress}, disease_spread: {disease_spread}, dis_severity: {dis_severity}, R0: {R0}")
-        
-       #  #action = np.random.randint(125)
-       #  self.state = (week_state, 0, ICU_stress, disease_spread, dis_severity, R0)
         return self.state
 
 
 
 
 
-    def step(self, action):
+    def step(self, action, episode):
         """
         Applies the given action to the environment.
         Args:
@@ -200,12 +165,25 @@ class CustomEnv:
         # subprocess.call(['python3', 'src/epi_sim.py'])
         # determine week no.
         util = Utils()
-
+        # if self.steps == 0:
+        #      with open(self.config_file, 'r') as f:
+        #         config_dict = json.load(f)
+        #     week_state = 5
+        #     config_dict = copy.deepcopy(self.config_dict_init)
+        # else:
+        #     config_dict = copy.deepcopy(self.config_dict)
         week_state = util.get_week_number(config_dict['simulation']['start_date']) - 1
+        
         print(f"Week no: {week_state}")
+        # print(config_dict)
+        # print(self.config_dict)
+        # print(config_dict)
         # HERE 17-12-2024
         # subprocess.call(['python3', 'src/epi_sim.py'])
 
+        if int(week_state) >= self.episode_length - 1:
+            done = True
+            return self.state, 0, done
         
         # Convert action to the corresponding parameters in the .json file
         #APPLY ACTION
@@ -223,13 +201,14 @@ class CustomEnv:
 		
         # Invoke the simulator with that .json file
 
-        config_fname = os.path.join(self.run_folder, f"config_{week_state}.json")
+        config_fname = os.path.join(self.run_folder, f"config_{episode}_{week_state}.json")
         with open(config_fname, "w") as fh:
             json.dump(config_dict, fh, indent=4)
 
         params_strn = f"-c {config_fname} -d {self.data_folder} -i {self.run_folder}"
             
-        command = f"julia {exec_path} run {params_strn}"
+        # command = f"julia {exec_path} run {params_strn}"
+        command = f"./model/EpiSim.jl/episim run {params_strn}"
         subprocess.run(command, shell=True)
 
         # Read the output and proceed
@@ -270,8 +249,6 @@ class CustomEnv:
         #done = np.random.rand() > 0.95  # Example: Randomly ends the episode #TODO: run simulator and get determine if it is week 48
         done = False
         # if week_state==47:
-        if int(week_state) >= 47:
-            done = True
 
         new_start_day = config_dict['simulation']['end_date']
         config_dict['simulation']['start_date'] = new_start_day
@@ -289,7 +266,7 @@ class CustomEnv:
 
         return self.state, reward, done
 
-    def render(self):
+    def render(self, episode):
         """
         Renders the current state of the environment.
         """
@@ -369,14 +346,14 @@ class RLAgent:
 # Step 3: Training Loop
 def train_agent(env, agent, episodes=2):
     for episode in range(episodes):
-        state = env.reset()
+        state = env.reset(episode)
         total_reward = 0
         done = False
 
         while not done:
-            env.render()
+            env.render(episode)
             action = agent.select_action(state)
-            next_state, reward, done = env.step(action)
+            next_state, reward, done = env.step(action, episode)
             print(f"**-- Selected action: {action}, Next state: {next_state}, Reward: {reward}")
             agent.learn(state, action, reward, next_state, done)
             state = next_state
@@ -455,6 +432,18 @@ class Utils:
             print(f"An error occurred: {e}")
             return None
 
+    def empty_config_folder(self, directory):
+        import os, shutil
+        for filename in os.listdir(directory):
+            file_path = os.path.join(directory, filename)
+            try:
+                if os.path.isfile(file_path) or os.path.islink(file_path):
+                    os.unlink(file_path)
+                elif os.path.isdir(file_path):
+                    shutil.rmtree(file_path)
+            except Exception as e:
+                print('Directory removal failed %s. Reason: %s' % (file_path, e))
+
 
 
 
@@ -464,6 +453,7 @@ def create_parser():
     parser.add_argument("--config", action="store", required=True, dest="config_file", help="Path to the configuration file")
     parser.add_argument("--data", action="store", required=True, dest="data_folder", help="Folder where the data is stored")
     parser.add_argument("--period", action="store", dest="evaluation_period", help="Evaluation period", type=int, default=14)
+    parser.add_argument("--episode_length", action="store", dest="episode_length", help="Episode length", type=int, default=48)
     return parser
 
 
@@ -482,6 +472,7 @@ if __name__ == "__main__":
     data_folder = args.data_folder
     config_file = args.config_file
     evaluation_period = int(args.evaluation_period)
+    episode_length = args.episode_length
 
     assert evaluation_period > 0, "The evaluation period must be a positive integer."
     assert evaluation_period <= 336, "The evaluation period must be less than or equal to 48 weeks."
@@ -510,6 +501,6 @@ if __name__ == "__main__":
     exp_folder = os.path.join("runs", experiment_id)
     os.makedirs(exp_folder, exist_ok=True)
 
-    env = CustomEnv(base_folder=base_folder, run_folder=exp_folder, data_folder=data_folder, config_dict=config_dict, categories_dict=categories_dict)
+    env = CustomEnv(base_folder=base_folder, run_folder=exp_folder, data_folder=data_folder, config_dict=config_dict, categories_dict=categories_dict, episode_length=episode_length, config_file=config_file)
     agent = RLAgent(state_dims=env.state_dims, action_space=env.action_space)
-    train_agent(env, agent, episodes=10)
+    train_agent(env, agent, episodes=10000)
