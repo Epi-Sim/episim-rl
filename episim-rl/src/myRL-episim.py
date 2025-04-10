@@ -296,7 +296,7 @@ class RLAgent:
 
         # Q-table initialization
         # self.state_bins = [np.linspace(0, 1, bins) for _ in range(state_space)]
-        self.q_table = np.zeros(state_dims + (action_space,))
+        self.q_table = np.zeros(state_dims + (action_space,)) - 40000000
 
     def select_action(self, state):
         """
