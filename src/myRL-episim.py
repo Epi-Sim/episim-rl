@@ -7,6 +7,7 @@ import pandas as pd
 import xarray as xr
 import shutil
 import argparse
+import math
 
 
 def run_episim():
@@ -206,27 +207,53 @@ class CustomEnv:
 
         # read the output observables and computes the reward
 
+        full_xa = xr.open_dataset(os.path.join(self.run_folder, "output", "compartments_full.nc"))
         observables_xa = xr.open_dataset(os.path.join(self.run_folder, "output", "observables.nc"))
-        ICU_stress = float(observables_xa["new_hospitalized"].sum(['G','M','T']).values)
-        disease_spread = float(observables_xa["new_infected"].sum(['G','M','T']).values)
+
+        ICU_stress = float(full_xa["HR"].sum(['G','M','T']).values) + float(full_xa["HD"].sum(['G','M','T']).values)
+        disease_spread = float(full_xa["I"].sum(['G','M','T']).values)*100000 / total_population
         dis_severity = float(observables_xa["new_deaths"].sum(['G','M','T']).values)
-        R0_xa = observables_xa["R_eff"].sel(T=last_day)* population/total_population
+        R0_xa = observables_xa["R_eff"].sel(T=last_day) * population / total_population
         R0 = float(R0_xa.sum(['G', 'M']).values)
+
+        new_cases = float(observables_xa["new_infected"].sum(['G','M','T']).values)
+        new_hospitalizations = float(observables_xa["new_hospitalized"].sum(['G','M','T']).values)
     
-        reward = -(ICU_stress + disease_spread + dis_severity)
-        print(f"reward: {reward}")
+        kappa = float(config_dict["NPI"]["κ₀s"][0])
+        delta = float(config_dict["NPI"]["δs"][0])
+        A = 5
+        b = 0.4
+        a = 1
+        p = 1
+        lockdown_cost = A*((1/(1 + math.exp(-a*(kappa - b)))) + delta**p)
+        
+        
+        print(f"Total hospitalizations: {ICU_stress}")
+        print(f"New deaths: {dis_severity}")
+        print(f"New hospitalizations: {new_hospitalizations}")
+        print(f"Lockdwon: {lockdown_cost}")
+        
+        new_deaths = dis_severity
 
         ICU_stress = map_observables_to_state_space(ICU_stress, categories_dict['ICU_stress'])
         disease_spread = map_observables_to_state_space(disease_spread, categories_dict['disease_spread'])
         dis_severity = map_observables_to_state_space(dis_severity, categories_dict['dis_severity'])
         R0 = map_observables_to_state_space(R0, categories_dict['R0'])
-
-        print(f"ICU_stress: {ICU_stress}, disease_spread: {disease_spread}, dis_severity: {dis_severity}, R0: {R0}")
         
-        #action = np.random.randint(125)
+        # Update the state
         self.state = (week_state, action, ICU_stress, disease_spread, dis_severity, R0)
         
+
         
+        #REWARD 
+        reward = -(2*new_hospitalizations*((ICU_stress+1)**2) + new_deaths + (- (ICU_stress**2)/4 + 5 - (dis_severity**2)/4 + 5)*lockdown_cost)
+
+        
+        
+        print(f"H term: {2*new_hospitalizations*((ICU_stress+ 1)**2)}")
+        print(f"D term: {new_deaths}")
+        print(f"Lockdown term: {(- (ICU_stress**2)/4 + 5 - (dis_severity**2)/4 + 5)*lockdown_cost}")
+
         #self.state = tuple(np.random.randint(dim) for dim in self.state_dims) #TODO: run simulator and get NEXT state
 
         #TODO store each value to make a plot of the reward
