@@ -3,9 +3,9 @@
 		"engine": "MMCACovid19",
 		"start_date": "2020-02-09",
 		"end_date": "2020-05-31",
-		"save_full_output": false,
+		"save_full_output": true,
 		"save_observables": true,
-		"save_time_step": 1,
+		"save_time_step": -1,
 		"output_folder": "output",
 		"output_format": "netcdf"
 	},
