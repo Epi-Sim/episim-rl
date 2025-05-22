@@ -52,6 +52,22 @@ def run_episim():
 
     logger.info("Example done")
 
+def log_episode_reward(output_path, episode_number, total_reward):
+    """
+    Logs the total reward of an episode to a CSV file.
+    Creates the file if it doesn't exist.
+
+    Args:
+        output_path (str): Path to the CSV file to save rewards.
+        episode_number (int): The episode number.
+        total_reward (float): The total reward obtained.
+    """
+    log_exists = os.path.exists(output_path)
+    with open(output_path, 'a') as f:
+        if not log_exists:
+            f.write("episode,total_reward\n")  # Header
+        f.write(f"{episode_number},{total_reward}\n")
+
 
 #function that maps values of the observables to the state space 1-5 or 0-1
 def map_observables_to_state_space(value, map_dict):
@@ -80,7 +96,7 @@ def map_to_action(data_folder, action):
 
 # Environment Interface
 class CustomEnv:
-    def __init__(self, base_folder, run_folder, data_folder, config_dict, categories_dict):
+    def __init__(self, base_folder, run_folder, data_folder, config_dict, categories_dict, episode_length, config_file):
         # Define environment state and action space
         # Episode duration: 1 year (48 weeks)
         # Step: 2 weeks
@@ -94,17 +110,43 @@ class CustomEnv:
         self.action_space = 125  # 125 possible actions [\Phi0(0,0.25,0.5,0.75,1), delta(0,0.25,0.5,0.75,1), k0(0,0.25,0.5,0.75,1)]
         self.state = None
         self.steps = 0
+        self.episode_length = episode_length
+        self.config_file = config_file
 
-    def reset(self):
+    def reset(self, episode):
         """
         Resets the environment to the initial state.
         Returns:
             state (numpy array): The initial state.
         """
-        self.state =  tuple(np.random.randint(dim) for dim in self.state_dims) #TODO: run simulator and get INIT state
+
+        print(f"Resetting")
+
+        self.steps = 0
+
+        utils = Utils
+
+        week_state = 5
+        print(f"Resetting ... week no: {week_state}")
+
+        self.state = (week_state, 0, 0, 0, 0, 0)
+        with open(self.config_file, 'r') as f:
+            config_dict_up = json.load(f)
+            # config_dict['simulation']['start_date'] = config_dict_up['simulation']['start_date']
+            # TODO
+            config_dict['simulation']['start_date'] = "2020-02-09"
+            new_start_day = config_dict['simulation']['start_date']
+            new_end_date = (datetime.strptime(new_start_day, "%Y-%m-%d") + timedelta(days=14)).strftime("%Y-%m-%d")
+            config_dict['simulation']['end_date'] = new_end_date
+            config_dict["NPI"]["κ₀s"]= [0]
+            config_dict["NPI"]["ϕs"]= [0.2]
+            config_dict["NPI"]["δs"]= [0]
+            config_dict["NPI"]["tᶜs"]= [1]
+            config_dict['data']['initial_condition_filename'] = config_dict_up['data']['initial_condition_filename']
+
         return self.state
 
-    def step(self, action):
+    def step(self, action, episode):
         """
         Applies the given action to the environment.
         Args:
@@ -122,6 +164,10 @@ class CustomEnv:
 
         week_state = util.get_week_number(config_dict['simulation']['start_date']) - 1
         print(f"Week no: {week_state}")
+
+        if int(week_state) >= self.episode_length - 1:
+            done = True
+            return self.state, 0, done
         # HERE 17-12-2024
         # subprocess.call(['python3', 'src/epi_sim.py'])
 
@@ -135,13 +181,14 @@ class CustomEnv:
             config_dict["NPI"]["κ₀s"]= [float(action_values['k0'])]
             config_dict["NPI"]["ϕs"]= [float(action_values['phi'])]
             config_dict["NPI"]["δs"]= [float(action_values['delta'])]
+            print(f"**-- selected action: {action}, maps to: {action_values}")
        # else:
             #TODO: What values is supposed to have action in the first two weeks?
             #action = np.random.randint(125)
 		
         # Invoke the simulator with that .json file
 
-        config_fname = os.path.join(self.run_folder, f"config_{week_state}.json")
+        config_fname = os.path.join(self.run_folder, f"config_{episode}_{week_state}.json")
         with open(config_fname, "w") as fh:
             json.dump(config_dict, fh, indent=4)
 
@@ -204,7 +251,7 @@ class CustomEnv:
 
         return self.state, reward, done
 
-    def render(self):
+    def render(self, episode):
         """
         Renders the current state of the environment.
         """
@@ -281,24 +328,27 @@ class RLAgent:
 
 # Step 3: Training Loop
 def train_agent(env, agent, episodes=2):
+    rewards_log_file = os.path.join(env.run_folder, "episode_rewards.csv")
+
     for episode in range(episodes):
-        state = env.reset()
+        state = env.reset(episode)
         total_reward = 0
         done = False
 
         while not done:
-            env.render()
+            env.render(episode)
             action = agent.select_action(state)
-            next_state, reward, done = env.step(action)
+            next_state, reward, done = env.step(action, episode)
             print(f"**-- Selected action: {action}, Next state: {next_state}, Reward: {reward}")
             agent.learn(state, action, reward, next_state, done)
             state = next_state
             total_reward += reward
             print(f"**** Episode {episode + 1} (Step {env.steps}): Reward = {reward:.2f}, Total Reward = {total_reward:.2f}, Epsilon = {agent.epsilon:.3f}")
-
+            
         agent.decay_epsilon()
-        print(f"**** Episode {episode + 1}: Total Reward = {total_reward:.2f}, Epsilon = {agent.epsilon:.3f}")
+        print(f"**** Episode {episode + 1}: Total Reward = {total_reward:.5f}, Epsilon = {agent.epsilon:.3f}")
 
+        log_episode_reward(rewards_log_file, episode + 1, total_reward)
 
 class Utils:
     def get_week_number(self, date_str):
@@ -375,6 +425,7 @@ def create_parser():
     parser.add_argument("--config", action="store", required=True, dest="config_file", help="Path to the configuration file")
     parser.add_argument("--data", action="store", required=True, dest="data_folder", help="Folder where the data is stored")
     parser.add_argument("--period", action="store", dest="evaluation_period", help="Evaluation period", type=int, default=14)
+    parser.add_argument("--episode_length", action="store", dest="episode_length", help="Episode length", type=int, default=48)
     return parser
 
 
@@ -393,6 +444,7 @@ if __name__ == "__main__":
     data_folder = args.data_folder
     config_file = args.config_file
     evaluation_period = int(args.evaluation_period)
+    episode_length = args.episode_length
 
     assert evaluation_period > 0, "The evaluation period must be a positive integer."
     assert evaluation_period <= 336, "The evaluation period must be less than or equal to 48 weeks."
@@ -421,6 +473,6 @@ if __name__ == "__main__":
     exp_folder = os.path.join("runs", experiment_id)
     os.makedirs(exp_folder, exist_ok=True)
 
-    env = CustomEnv(base_folder=base_folder, run_folder=exp_folder, data_folder=data_folder, config_dict=config_dict, categories_dict=categories_dict)
+    env = CustomEnv(base_folder=base_folder, run_folder=exp_folder, data_folder=data_folder, config_dict=config_dict, categories_dict=categories_dict, episode_length=episode_length, config_file=config_file)
     agent = RLAgent(state_dims=env.state_dims, action_space=env.action_space)
-    train_agent(env, agent, episodes=1)
+    train_agent(env, agent, episodes=2)
