@@ -97,7 +97,7 @@ def map_to_action(data_folder, action):
 
 # Environment Interface
 class CustomEnv:
-    def __init__(self, base_folder, run_folder, data_folder, config_dict, categories_dict, episode_length, config_file):
+    def __init__(self, base_folder, run_folder, data_folder, config_dict, categories_dict, evaluation_period, episode_length, config_file):
         # Define environment state and action space
         # Episode duration: 1 year (48 weeks)
         # Step: 2 weeks
@@ -106,6 +106,7 @@ class CustomEnv:
         self.data_folder = data_folder
         self.config_dict = config_dict
         self.categories_dict = categories_dict
+        self.evaluation_period = evaluation_period
         self.state_dims = (48, 125, 5, 5, 5, 2)
         self.state_space = 6  # State is a vector of size six [weeks(1-48), previous_actions(1-125), ICU_stress(1-5), disease_spread(1-5), dis_severity(1-5), R0(0/1)]
         self.action_space = 125  # 125 possible actions [\Phi0(0,0.25,0.5,0.75,1), delta(0,0.25,0.5,0.75,1), k0(0,0.25,0.5,0.75,1)]
@@ -137,12 +138,12 @@ class CustomEnv:
             # TODO
             config_dict['simulation']['start_date'] = "2020-02-09"
             new_start_day = config_dict['simulation']['start_date']
-            new_end_date = (datetime.strptime(new_start_day, "%Y-%m-%d") + timedelta(days=14)).strftime("%Y-%m-%d")
+            new_end_date = (datetime.strptime(new_start_day, "%Y-%m-%d") + timedelta(days=self.evaluation_period)).strftime("%Y-%m-%d")
             config_dict['simulation']['end_date'] = new_end_date
-            config_dict["NPI"]["κ₀s"]= [0]
-            config_dict["NPI"]["ϕs"]= [0.2]
-            config_dict["NPI"]["δs"]= [0]
-            config_dict["NPI"]["tᶜs"]= [1]
+            config_dict["NPI"]["κ₀s"]= [0] * (evaluation_period + 1)
+            config_dict["NPI"]["ϕs"]= [0.2] * (evaluation_period + 1)
+            config_dict["NPI"]["δs"]= [0] * (evaluation_period + 1)
+            config_dict["NPI"]["tᶜs"]= list(range(1, evaluation_period + 2))
             config_dict['data']['initial_condition_filename'] = config_dict_up['data']['initial_condition_filename']
 
         return self.state
@@ -160,6 +161,7 @@ class CustomEnv:
         # Simulate environment dynamics
         # Invoke the simulator:
         # subprocess.call(['python3', 'src/epi_sim.py'])
+
         # determine week no.
         util = Utils()
 
@@ -179,9 +181,9 @@ class CustomEnv:
         #if week_state > 6:
         if self.steps > 0:
             action_values = map_to_action(data_folder, action)
-            config_dict["NPI"]["κ₀s"]= [float(action_values['k0'])]
-            config_dict["NPI"]["ϕs"]= [float(action_values['phi'])]
-            config_dict["NPI"]["δs"]= [float(action_values['delta'])]
+            config_dict["NPI"]["κ₀s"]= [float(action_values['k0'])] * evaluation_period
+            config_dict["NPI"]["ϕs"]= [float(action_values['phi'])] * evaluation_period
+            config_dict["NPI"]["δs"]= [float(action_values['delta'])] * evaluation_period
             print(f"**-- selected action: {action}, maps to: {action_values}")
        # else:
             #TODO: What values is supposed to have action in the first two weeks?
@@ -488,10 +490,10 @@ if __name__ == "__main__":
     end_date = (datetime.strptime(config_dict["simulation"]["start_date"], "%Y-%m-%d") + timedelta(days=evaluation_period)).strftime("%Y-%m-%d")
     config_dict["simulation"]["end_date"] = end_date
     
-    config_dict["NPI"]["κ₀s"]= [0]
-    config_dict["NPI"]["ϕs"]= [0.2]
-    config_dict["NPI"]["δs"]= [0]
-    config_dict["NPI"]["tᶜs"]= [1]
+    config_dict["NPI"]["κ₀s"]= [0] * (evaluation_period + 1)
+    config_dict["NPI"]["ϕs"]= [0.2] * (evaluation_period + 1)
+    config_dict["NPI"]["δs"]= [0] * (evaluation_period + 1)
+    config_dict["NPI"]["tᶜs"]= list(range(1, evaluation_period + 2))
 
     categorization_fname = os.path.join(data_folder,"observables_categories.json")
     with open(categorization_fname, "r") as f:
@@ -500,6 +502,6 @@ if __name__ == "__main__":
     exp_folder = os.path.join("runs", experiment_id)
     os.makedirs(exp_folder, exist_ok=True)
 
-    env = CustomEnv(base_folder=base_folder, run_folder=exp_folder, data_folder=data_folder, config_dict=config_dict, categories_dict=categories_dict, episode_length=episode_length, config_file=config_file)
+    env = CustomEnv(base_folder=base_folder, run_folder=exp_folder, data_folder=data_folder, config_dict=config_dict, categories_dict=categories_dict, evaluation_period=evaluation_period, episode_length=episode_length, config_file=config_file)
     agent = RLAgent(state_dims=env.state_dims, action_space=env.action_space)
     train_agent(env, agent, episodes=2)
