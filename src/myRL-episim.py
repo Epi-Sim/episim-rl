@@ -69,6 +69,33 @@ def log_episode_reward(output_path, episode_number, total_reward):
             f.write("episode,total_reward\n")  # Header
         f.write(f"{episode_number},{total_reward}\n")
 
+def log_reward(output_path, episode_number, week, total_hosp, new_hosp, new_deaths, H_term, D_term, lockdown_term, reward, action, delta, k0, phi):
+    """
+    Logs in the detail the reward function of an episode to a CSV file.
+    Creates the file if it doesn't exist.
+
+    Args:
+        output_path (str): Path to the CSV file to save metrics.
+        episode_number (int): The episode number.
+        week (int): The current week number.
+        Total_hosp (float): Total hospitalizations.
+        new_hosp (float): New hospitalizations. 
+        new_deaths (float): New deaths.
+        H_term (float): Hospitalization term.
+        D_term (float): Death term.
+        Lockdown_term (float): Lockdown term.
+        reward (float): The reward obtained.
+        delta (float): Change in action.
+        action (int): The chosen action.
+        k0 (float): Parameter k0.
+        phi (float): Parameter phi.
+    """
+    log_exists = os.path.exists(output_path)
+    with open(output_path, 'a') as f:
+        if not log_exists:
+            f.write("episode,week,Total_hosp,new_hosp,new_deaths,H_term,D_term,Lockdown_term,reward,action,delta,k0,phi\n")  # Header
+        f.write(f"{episode_number},{week},{total_hosp},{new_hosp},{new_deaths},{H_term},{D_term},{lockdown_term},{reward},{action},{delta},{k0},{phi}\n")
+
 
 #function that maps values of the observables to the state space 1-5 or 0-1
 def map_observables_to_state_space(value, map_dict):
@@ -200,43 +227,42 @@ class CustomEnv:
         command = f"julia {exec_path} run {params_strn}"
         subprocess.run(command, shell=True)
 
-        # Read the output and proceed
         last_day = config_dict['simulation']['end_date']
 
+        # Read the output and proceed
+        
+        # Read the population data
         population_fname = os.path.join(data_folder, config_dict['data']['metapopulation_data_filename'])
         population = pd.read_csv(population_fname, index_col = 'id', usecols = ["id", "Y", "M", "O"])
         total_population = population[['Y', 'M', 'O']].sum().sum()
 
-        # read the output observables and computes the reward
+        # read the output observables and compute the reward
 
         full_xa = xr.open_dataset(os.path.join(self.run_folder, "output", "compartments_full.nc"))
         observables_xa = xr.open_dataset(os.path.join(self.run_folder, "output", "observables.nc"))
 
-        ICU_stress = float(full_xa["HR"].sum(['G','M','T']).values) + float(full_xa["HD"].sum(['G','M','T']).values)
-        disease_spread = float(full_xa["I"].sum(['G','M','T']).values)*100000 / total_population
+        ICU_stress = float(full_xa["HR"].sel(T=last_day).sum(['G','M']).values) + float(full_xa["HD"].sel(T=last_day).sum(['G','M']).values)
+        disease_spread = float(full_xa["I"].sel(T=last_day).sum(['G','M']).values) * 100000 / total_population
         dis_severity = float(observables_xa["new_deaths"].sum(['G','M','T']).values)
         R0_xa = observables_xa["R_eff"].sel(T=last_day) * population / total_population
         R0 = float(R0_xa.sum(['G', 'M']).values)
 
-        new_cases = float(observables_xa["new_infected"].sum(['G','M','T']).values)
+        # Calculate new hospitalizations
         new_hospitalizations = float(observables_xa["new_hospitalized"].sum(['G','M','T']).values)
     
+        # Calculate the lockdown cost based on the NPI parameters
         kappa = float(config_dict["NPI"]["κ₀s"][0])
         delta = float(config_dict["NPI"]["δs"][0])
-        A = 5
-        b = 0.4
-        a = 1
-        p = 1
-        lockdown_cost = A*((1/(1 + math.exp(-a*(kappa - b)))) + delta**p)
+        phi = float(config_dict["NPI"]["ϕs"][0])
+        A = 25
+        b = 0.2
+        a = 1.5
+        lockdown_cost = A*((1/(1 + math.exp(-a*(kappa - b)))) + (1/(1 + math.exp(-a*(delta - b)))) - phi)
         
+        total_hosp = ICU_stress
+        new_deaths = dis_severity        
         
-        print(f"Total hospitalizations: {ICU_stress}")
-        print(f"New deaths: {dis_severity}")
-        print(f"New hospitalizations: {new_hospitalizations}")
-        print(f"Lockdwon: {lockdown_cost}")
-        
-        new_deaths = dis_severity
-
+        #MAP OBSERVABLES TO STATE SPACE
         ICU_stress = map_observables_to_state_space(ICU_stress, categories_dict['ICU_stress'])
         disease_spread = map_observables_to_state_space(disease_spread, categories_dict['disease_spread'])
         dis_severity = map_observables_to_state_space(dis_severity, categories_dict['dis_severity'])
@@ -244,17 +270,21 @@ class CustomEnv:
         
         # Update the state
         self.state = (week_state, action, ICU_stress, disease_spread, dis_severity, R0)
-        
 
-        
+        # COMPUTE REWARD
+        # Lockdown term
+        lockdown_term = (-0.5 * (ICU_stress**2 + dis_severity**2) + A)*lockdown_cost
+        # Hospitalization term
+        H_term = new_hospitalizations*(ICU_stress + 1)
+
         #REWARD 
-        reward = -(2*new_hospitalizations*((ICU_stress+1)**2) + new_deaths + (- (ICU_stress**2)/4 + 5 - (dis_severity**2)/4 + 5)*lockdown_cost)
+        reward = -(H_term + new_deaths + lockdown_term)
 
-        
-        
-        print(f"H term: {2*new_hospitalizations*((ICU_stress+ 1)**2)}")
-        print(f"D term: {new_deaths}")
-        print(f"Lockdown term: {(- (ICU_stress**2)/4 + 5 - (dis_severity**2)/4 + 5)*lockdown_cost}")
+
+        # Save reward function and the contribution of each term (H_term, new_deaths, lockdown_term) to a CSV file
+        output_path = os.path.join(self.run_folder, "reward_contributions.csv")
+
+        log_reward(output_path, episode, week_state, total_hosp, new_hospitalizations, new_deaths, H_term, new_deaths, lockdown_term, reward, action, delta, kappa, phi)
 
         #self.state = tuple(np.random.randint(dim) for dim in self.state_dims) #TODO: run simulator and get NEXT state
 
