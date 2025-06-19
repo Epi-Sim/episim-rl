@@ -8,6 +8,7 @@ import xarray as xr
 import shutil
 import argparse
 import math
+import pickle
 
 
 def run_episim():
@@ -355,7 +356,7 @@ class RLAgent:
         else:
             return np.argmax(self.q_table[state])  # Exploit
 
-    def learn(self, state, action, reward, next_state, done):
+    def learn(self, state, action, reward, next_state, run_folder, done):
         """
         Updates the Q-table using the Temporal Difference (TD) method.
         Args:
@@ -363,6 +364,7 @@ class RLAgent:
             action (int): Action taken.
             reward (float): Reward received.
             next_state (numpy array): Next state.
+            run_folder (str): Folder to save the Q-table.
             done (bool): Whether the episode ended.
         """
         # discretized_state = self.discretize_state(state)
@@ -377,6 +379,9 @@ class RLAgent:
 
         # TD Update
         self.q_table[state][action] += self.alpha * (td_target - self.q_table[state][action])
+        
+        with open(os.path.join(run_folder, "q_table.pkl"), "wb") as f:
+            pickle.dump(self.q_table, f)
 
     def decay_epsilon(self):
         """
@@ -399,7 +404,7 @@ def train_agent(env, agent, episodes=2):
             action = agent.select_action(state)
             next_state, reward, done = env.step(action, episode)
             print(f"**-- Selected action: {action}, Next state: {next_state}, Reward: {reward}")
-            agent.learn(state, action, reward, next_state, done)
+            agent.learn(state, action, reward, next_state, env.run_folder, done)
             state = next_state
             total_reward += reward
             print(f"**** Episode {episode + 1} (Step {env.steps}): Reward = {reward:.2f}, Total Reward = {total_reward:.2f}, Epsilon = {agent.epsilon:.3f}")
