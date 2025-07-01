@@ -11,49 +11,6 @@ import math
 import pickle
 
 
-def run_episim():
-    "Run steps and update the policy"
-    executable_path = os.path.join(os.pardir, "episim")
-
-    initial_conditions = os.path.join(os.pardir, "models/mitma/initial_conditions.nc")
-
-    # read the config file sample to dict
-    with open(os.path.join(os.pardir, "models/mitma/config.json"), 'r') as f:
-        config = json.load(f)
-
-    data_folder = os.path.join(os.pardir, "models/mitma")
-    instance_folder = os.path.join(os.pardir, "runs")
-
-    model = EpiSim(
-        config, data_folder, instance_folder, initial_conditions
-    )
-    
-    # Set up with compiled executable
-    # model.setup(executable_type='compiled', executable_path=os.path.join(os.pardir, "episim"))
-    
-    # Or set up with Julia interpreter
-    model.setup(executable_type='interpreter', executable_path=os.path.join(os.pardir, "run.jl"))
-
-    logger.debug("debug Model wrapper init complete")
-
-    start_date="2023-01-01"
-    logger.info(f"First date: {start_date}")
-    current_date = start_date
-    for i in range(1):
-        new_state, next_date = model.step(start_date=current_date, length_days=7)
-        # new_state, next_date = model.step(current_date, 7)
-
-        # update the policy
-        # increase the level of lockdown by 5% at each iteration
-        config["NPI"]["Îºâ‚€s"] = [ config["NPI"]["Îºâ‚€s"][0] * (1 - 0.05) ]
-        model.update_config(config)
-
-        logger.debug(f"Iteration {i+1} - Model state: {new_state}")
-        logger.info(f"Iteration {i+1} - Next date: {next_date}")
-        current_date = next_date
-
-    logger.info("Example done")
-
 def log_episode_reward(output_path, episode_number, total_reward):
     """
     Logs the total reward of an episode to a CSV file.
@@ -132,6 +89,7 @@ class CustomEnv:
         self.base_folder = base_folder
         self.run_folder = run_folder
         self.data_folder = data_folder
+        self.config_file = config_file
         self.config_dict = config_dict
         self.categories_dict = categories_dict
         self.evaluation_period = evaluation_period
@@ -141,7 +99,7 @@ class CustomEnv:
         self.state = None
         self.steps = 0
         self.episode_length = episode_length
-        self.config_file = config_file
+        
 
     def reset(self, episode):
         """
@@ -164,15 +122,15 @@ class CustomEnv:
             config_dict_up = json.load(f)
             # config_dict['simulation']['start_date'] = config_dict_up['simulation']['start_date']
             # TODO
-            config_dict['simulation']['start_date'] = "2020-02-09"
-            new_start_day = config_dict['simulation']['start_date']
+            self.config_dict['simulation']['start_date'] = "2020-02-09"
+            new_start_day = self.config_dict['simulation']['start_date']
             new_end_date = (datetime.strptime(new_start_day, "%Y-%m-%d") + timedelta(days=self.evaluation_period)).strftime("%Y-%m-%d")
-            config_dict['simulation']['end_date'] = new_end_date
-            config_dict["NPI"]["κ₀s"]= [0] * (evaluation_period + 1)
-            config_dict["NPI"]["ϕs"]= [0.2] * (evaluation_period + 1)
-            config_dict["NPI"]["δs"]= [0] * (evaluation_period + 1)
-            config_dict["NPI"]["tᶜs"]= list(range(1, evaluation_period + 2))
-            config_dict['data']['initial_condition_filename'] = config_dict_up['data']['initial_condition_filename']
+            self.config_dict['simulation']['end_date'] = new_end_date
+            self.config_dict["NPI"]["κ₀s"]= [0] * (self.evaluation_period + 1)
+            self.config_dict["NPI"]["ϕs"]= [0.2] * (self.evaluation_period + 1)
+            self.config_dict["NPI"]["δs"]= [0] * (self.evaluation_period + 1)
+            self.config_dict["NPI"]["tᶜs"]= list(range(1, self.evaluation_period + 2))
+            self.config_dict['data']['initial_condition_filename'] = config_dict_up['data']['initial_condition_filename']
 
         return self.state
 
@@ -191,9 +149,9 @@ class CustomEnv:
         # subprocess.call(['python3', 'src/epi_sim.py'])
 
         # determine week no.
-        util = Utils()
+        utils = Utils()
 
-        week_state = util.get_week_number(config_dict['simulation']['start_date']) - 1
+        week_state = utils.get_week_number(self.config_dict['simulation']['start_date']) - 1
         print(f"Week no: {week_state}")
 
         if int(week_state) >= self.episode_length - 1:
@@ -209,9 +167,9 @@ class CustomEnv:
         #if week_state > 6:
         if self.steps > 0:
             action_values = map_to_action(data_folder, action)
-            config_dict["NPI"]["κ₀s"]= [float(action_values['k0'])] * evaluation_period
-            config_dict["NPI"]["ϕs"]= [float(action_values['phi'])] * evaluation_period
-            config_dict["NPI"]["δs"]= [float(action_values['delta'])] * evaluation_period
+            self.config_dict["NPI"]["κ₀s"]= [float(action_values['k0'])] * self.evaluation_period
+            self.config_dict["NPI"]["ϕs"]= [float(action_values['phi'])] * self.evaluation_period
+            self.config_dict["NPI"]["δs"]= [float(action_values['delta'])] * self.evaluation_period
             print(f"**-- selected action: {action}, maps to: {action_values}")
        # else:
             #TODO: What values is supposed to have action in the first two weeks?
@@ -221,19 +179,19 @@ class CustomEnv:
 
         config_fname = os.path.join(self.run_folder, f"config_{episode}_{week_state}.json")
         with open(config_fname, "w") as fh:
-            json.dump(config_dict, fh, indent=4)
+            json.dump(self.config_dict, fh, indent=4)
 
         params_strn = f"-c {config_fname} -d {self.data_folder} -i {self.run_folder}"
             
         command = f"julia {exec_path} run {params_strn}"
         subprocess.run(command, shell=True)
 
-        last_day = config_dict['simulation']['end_date']
+        last_day = self.config_dict['simulation']['end_date']
 
         # Read the output and proceed
         
         # Read the population data
-        population_fname = os.path.join(data_folder, config_dict['data']['metapopulation_data_filename'])
+        population_fname = os.path.join(self.data_folder, self.config_dict['data']['metapopulation_data_filename'])
         population = pd.read_csv(population_fname, index_col = 'id', usecols = ["id", "Y", "M", "O"])
         total_population = population[['Y', 'M', 'O']].sum().sum()
 
@@ -252,9 +210,9 @@ class CustomEnv:
         new_hospitalizations = float(observables_xa["new_hospitalized"].sum(['G','M','T']).values)
     
         # Calculate the lockdown cost based on the NPI parameters
-        kappa = float(config_dict["NPI"]["κ₀s"][0])
-        delta = float(config_dict["NPI"]["δs"][0])
-        phi = float(config_dict["NPI"]["ϕs"][0])
+        kappa = float(self.config_dict["NPI"]["κ₀s"][0])
+        delta = float(self.config_dict["NPI"]["δs"][0])
+        phi = float(self.config_dict["NPI"]["ϕs"][0])
         A = 25
         b = 0.2
         a = 1.5
@@ -295,13 +253,13 @@ class CustomEnv:
         #done = np.random.rand() > 0.95  # Example: Randomly ends the episode #TODO: run simulator and get determine if it is week 48
         done = False
 
-        new_start_day = config_dict['simulation']['end_date']
-        config_dict['simulation']['start_date'] = new_start_day
+        new_start_day = self.config_dict['simulation']['end_date']
+        self.config_dict['simulation']['start_date'] = new_start_day
         new_end_date = (datetime.strptime(new_start_day, "%Y-%m-%d") + timedelta(days=14)).strftime("%Y-%m-%d")
-        config_dict['simulation']['end_date'] = new_end_date
+        self.config_dict['simulation']['end_date'] = new_end_date
 
         initial_condition_filename = os.path.join(self.base_folder, self.run_folder, "output", f"compartments_t_{new_start_day}.nc")
-        config_dict['data']['initial_condition_filename'] = initial_condition_filename
+        self.config_dict['data']['initial_condition_filename'] = initial_condition_filename
 
         self.steps = self.steps + 1
  
@@ -489,6 +447,7 @@ def create_parser():
     parser.add_argument("--config", action="store", required=True, dest="config_file", help="Path to the configuration file")
     parser.add_argument("--data", action="store", required=True, dest="data_folder", help="Folder where the data is stored")
     parser.add_argument("--period", action="store", dest="evaluation_period", help="Evaluation period", type=int, default=14)
+    parser.add_argument("--episodes", action="store", dest="episodes", help="Number of episodes to run", type=int, default=10)
     parser.add_argument("--episode_length", action="store", dest="episode_length", help="Episode length", type=int, default=48)
     return parser
 
@@ -507,7 +466,8 @@ if __name__ == "__main__":
     experiment_id = args.experiment_id
     data_folder = args.data_folder
     config_file = args.config_file
-    evaluation_period = int(args.evaluation_period)
+    evaluation_period = args.evaluation_period
+    episodes = args.episodes
     episode_length = args.episode_length
 
     assert evaluation_period > 0, "The evaluation period must be a positive integer."
@@ -535,8 +495,12 @@ if __name__ == "__main__":
             categories_dict = json.load(f)
 
     exp_folder = os.path.join("runs", experiment_id)
+    #Delete the folder if it exists
+    if os.path.exists(exp_folder):
+        shutil.rmtree(exp_folder)
+    # Create the experiment folder
     os.makedirs(exp_folder, exist_ok=True)
 
     env = CustomEnv(base_folder=base_folder, run_folder=exp_folder, data_folder=data_folder, config_dict=config_dict, categories_dict=categories_dict, evaluation_period=evaluation_period, episode_length=episode_length, config_file=config_file)
     agent = RLAgent(state_dims=env.state_dims, action_space=env.action_space)
-    train_agent(env, agent, episodes=2)
+    train_agent(env, agent, episodes=episodes)
