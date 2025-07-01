@@ -27,7 +27,7 @@ def log_episode_reward(output_path, episode_number, total_reward):
             f.write("episode,total_reward\n")  # Header
         f.write(f"{episode_number},{total_reward}\n")
 
-def log_reward(output_path, episode_number, week, total_hosp, new_hosp, new_deaths, H_term, D_term, lockdown_term, reward, action, delta, k0, phi):
+def log_reward(output_path, episode_number, week, total_hosp, new_hosp, new_deaths, H_term, D_term, lockdown_term, reward, action, delta, k0, phi, error):
     """
     Logs in the detail the reward function of an episode to a CSV file.
     Creates the file if it doesn't exist.
@@ -51,8 +51,8 @@ def log_reward(output_path, episode_number, week, total_hosp, new_hosp, new_deat
     log_exists = os.path.exists(output_path)
     with open(output_path, 'a') as f:
         if not log_exists:
-            f.write("episode,week,Total_hosp,new_hosp,new_deaths,H_term,D_term,Lockdown_term,reward,action,delta,k0,phi\n")  # Header
-        f.write(f"{episode_number},{week},{total_hosp},{new_hosp},{new_deaths},{H_term},{D_term},{lockdown_term},{reward},{action},{delta},{k0},{phi}\n")
+            f.write("episode,week,Total_hosp,new_hosp,new_deaths,H_term,D_term,Lockdown_term,reward,action,delta,k0,phi,error\n")  # Header
+        f.write(f"{episode_number},{week},{total_hosp},{new_hosp},{new_deaths},{H_term},{D_term},{lockdown_term},{reward},{action},{delta},{k0},{phi},{error}\n")
 
 
 #function that maps values of the observables to the state space 1-5 or 0-1
@@ -206,6 +206,26 @@ class CustomEnv:
         R0_xa = observables_xa["R_eff"].sel(T=last_day) * population / total_population
         R0 = float(R0_xa.sum(['G', 'M']).values)
 
+
+        # Check for errors in the simulation
+        # If the simulation fails, re-run it
+        error = False
+
+        if (ICU_stress > 10**10 or dis_severity > 10**10):
+            error = True
+            print("Simulation failed. Re-running simulation")
+            subprocess.run(command, shell=True)
+
+            full_xa = xr.open_dataset(os.path.join(self.run_folder, "output", "compartments_full.nc"))
+            observables_xa = xr.open_dataset(os.path.join(self.run_folder, "output", "observables.nc"))
+
+            ICU_stress = float(full_xa["HR"].sel(T=last_day).sum(['G','M']).values) + float(full_xa["HD"].sel(T=last_day).sum(['G','M']).values)
+            disease_spread = float(full_xa["I"].sel(T=last_day).sum(['G','M']).values) * 100000 / total_population
+            dis_severity = float(observables_xa["new_deaths"].sum(['G','M','T']).values)
+            R0_xa = observables_xa["R_eff"].sel(T=last_day) * population / total_population
+            R0 = float(R0_xa.sum(['G', 'M']).values)
+    
+
         # Calculate new hospitalizations
         new_hospitalizations = float(observables_xa["new_hospitalized"].sum(['G','M','T']).values)
     
@@ -243,7 +263,7 @@ class CustomEnv:
         # Save reward function and the contribution of each term (H_term, new_deaths, lockdown_term) to a CSV file
         output_path = os.path.join(self.run_folder, "reward_contributions.csv")
 
-        log_reward(output_path, episode, week_state, total_hosp, new_hospitalizations, new_deaths, H_term, new_deaths, lockdown_term, reward, action, delta, kappa, phi)
+        log_reward(output_path, episode, week_state, total_hosp, new_hospitalizations, new_deaths, H_term, new_deaths, lockdown_term, reward, action, delta, kappa, phi, error)
 
         #self.state = tuple(np.random.randint(dim) for dim in self.state_dims) #TODO: run simulator and get NEXT state
 
