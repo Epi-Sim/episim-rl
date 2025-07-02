@@ -3,77 +3,138 @@ import subprocess
 from datetime import datetime, timedelta
 import os
 import json
-import xarray
-from epi_sim import EpiSim
+import pandas as pd
+import xarray as xr
+import shutil
+import argparse
+import math
+import pickle
 
-def run_episim():
-    "Run steps and update the policy"
-    executable_path = os.path.join(os.pardir, "episim")
 
-    initial_conditions = os.path.join(os.pardir, "models/mitma/initial_conditions.nc")
+def log_episode_reward(output_path, episode_number, total_reward):
+    """
+    Logs the total reward of an episode to a CSV file.
+    Creates the file if it doesn't exist.
 
-    # read the config file sample to dict
-    with open(os.path.join(os.pardir, "models/mitma/config.json"), 'r') as f:
-        config = json.load(f)
+    Args:
+        output_path (str): Path to the CSV file to save rewards.
+        episode_number (int): The episode number.
+        total_reward (float): The total reward obtained.
+    """
+    log_exists = os.path.exists(output_path)
+    with open(output_path, 'a') as f:
+        if not log_exists:
+            f.write("episode,total_reward\n")  # Header
+        f.write(f"{episode_number},{total_reward}\n")
 
-    data_folder = os.path.join(os.pardir, "models/mitma")
-    instance_folder = os.path.join(os.pardir, "runs")
+def log_reward(output_path, episode_number, week, total_hosp, new_hosp, new_deaths, H_term, D_term, lockdown_term, reward, action, delta, k0, phi, error):
+    """
+    Logs in the detail the reward function of an episode to a CSV file.
+    Creates the file if it doesn't exist.
 
-    model = EpiSim(
-        config, data_folder, instance_folder, initial_conditions
-    )
+    Args:
+        output_path (str): Path to the CSV file to save metrics.
+        episode_number (int): The episode number.
+        week (int): The current week number.
+        Total_hosp (float): Total hospitalizations.
+        new_hosp (float): New hospitalizations. 
+        new_deaths (float): New deaths.
+        H_term (float): Hospitalization term.
+        D_term (float): Death term.
+        Lockdown_term (float): Lockdown term.
+        reward (float): The reward obtained.
+        delta (float): Change in action.
+        action (int): The chosen action.
+        k0 (float): Parameter k0.
+        phi (float): Parameter phi.
+    """
+    log_exists = os.path.exists(output_path)
+    with open(output_path, 'a') as f:
+        if not log_exists:
+            f.write("episode,week,Total_hosp,new_hosp,new_deaths,H_term,D_term,Lockdown_term,reward,action,delta,k0,phi,error\n")  # Header
+        f.write(f"{episode_number},{week},{total_hosp},{new_hosp},{new_deaths},{H_term},{D_term},{lockdown_term},{reward},{action},{delta},{k0},{phi},{error}\n")
+
+
+#function that maps values of the observables to the state space 1-5 or 0-1
+def map_observables_to_state_space(value, map_dict):
+    thresholds = {int(k): v for k, v in map_dict.items()}  # Convert keys to integers
+    sorted_thresholds = sorted(thresholds.items())  # Sort thresholds
     
-    # Set up with compiled executable
-    # model.setup(executable_type='compiled', executable_path=os.path.join(os.pardir, "episim"))
+    new_value = 1  # Default to the lowest category
+    for threshold, category in sorted_thresholds:
+        if value >= threshold:
+            new_value = category
+        else:
+            break
+    return new_value
     
-    # Or set up with Julia interpreter
-    model.setup(executable_type='interpreter', executable_path=os.path.join(os.pardir, "run.jl"))
 
-    logger.debug("debug Model wrapper init complete")
+def map_to_action(data_folder, action):
+    fname = os.path.join(data_folder, "map_action.csv")
+    df = pd.read_csv(fname, index_col='action')
+    return df.loc[action]
 
-    start_date="2023-01-01"
-    logger.info(f"First date: {start_date}")
-    current_date = start_date
-    for i in range(1):
-        new_state, next_date = model.step(start_date=current_date, length_days=7)
-        # new_state, next_date = model.step(current_date, 7)
-
-        # update the policy
-        # increase the level of lockdown by 5% at each iteration
-        config["NPI"]["Îºâ‚€s"] = [ config["NPI"]["Îºâ‚€s"][0] * (1 - 0.05) ]
-        model.update_config(config)
-
-        logger.debug(f"Iteration {i+1} - Model state: {new_state}")
-        logger.info(f"Iteration {i+1} - Next date: {next_date}")
-        current_date = next_date
-
-    logger.info("Example done")
-
+#create a function that creates the action space id and map it to the possible actions
+#action is the id
 
 
 
 
 # Environment Interface
 class CustomEnv:
-    def __init__(self):
+    def __init__(self, base_folder, run_folder, data_folder, config_dict, categories_dict, evaluation_period, episode_length, config_file):
         # Define environment state and action space
         # Episode duration: 1 year (48 weeks)
         # Step: 2 weeks
+        self.base_folder = base_folder
+        self.run_folder = run_folder
+        self.data_folder = data_folder
+        self.config_file = config_file
+        self.config_dict = config_dict
+        self.categories_dict = categories_dict
+        self.evaluation_period = evaluation_period
         self.state_dims = (48, 125, 5, 5, 5, 2)
-        # self.state_space = 6  # State is a vector of size six [weeks(1-48), previous_actions(1-125), ICU_stress(1-5), disease_spread(1-5), dis_severity(1-5), R0(0/1)]
+        self.state_space = 6  # State is a vector of size six [weeks(1-48), previous_actions(1-125), ICU_stress(1-5), disease_spread(1-5), dis_severity(1-5), R0(0/1)]
         self.action_space = 125  # 125 possible actions [\Phi0(0,0.25,0.5,0.75,1), delta(0,0.25,0.5,0.75,1), k0(0,0.25,0.5,0.75,1)]
         self.state = None
+        self.steps = 0
+        self.episode_length = episode_length
+        
 
-    def reset(self):
+    def reset(self, episode):
         """
         Resets the environment to the initial state.
         Returns:
             state (numpy array): The initial state.
         """
-        self.state =  tuple(np.random.randint(dim) for dim in self.state_dims) #TODO: run simulator and get INIT state
+
+        print(f"Resetting")
+
+        self.steps = 0
+
+        utils = Utils
+
+        week_state = 5
+        print(f"Resetting ... week no: {week_state}")
+
+        self.state = (week_state, 0, 0, 0, 0, 0)
+        with open(self.config_file, 'r') as f:
+            config_dict_up = json.load(f)
+            # config_dict['simulation']['start_date'] = config_dict_up['simulation']['start_date']
+            # TODO
+            self.config_dict['simulation']['start_date'] = "2020-02-09"
+            new_start_day = self.config_dict['simulation']['start_date']
+            new_end_date = (datetime.strptime(new_start_day, "%Y-%m-%d") + timedelta(days=self.evaluation_period)).strftime("%Y-%m-%d")
+            self.config_dict['simulation']['end_date'] = new_end_date
+            self.config_dict["NPI"]["κ₀s"]= [0] * (self.evaluation_period + 1)
+            self.config_dict["NPI"]["ϕs"]= [0.2] * (self.evaluation_period + 1)
+            self.config_dict["NPI"]["δs"]= [0] * (self.evaluation_period + 1)
+            self.config_dict["NPI"]["tᶜs"]= list(range(1, self.evaluation_period + 2))
+            self.config_dict['data']['initial_condition_filename'] = config_dict_up['data']['initial_condition_filename']
+
         return self.state
 
-    def step(self, action):
+    def step(self, action, episode):
         """
         Applies the given action to the environment.
         Args:
@@ -86,32 +147,149 @@ class CustomEnv:
         # Simulate environment dynamics
         # Invoke the simulator:
         # subprocess.call(['python3', 'src/epi_sim.py'])
+
         # determine week no.
+        utils = Utils()
 
+        week_state = utils.get_week_number(self.config_dict['simulation']['start_date']) - 1
+        print(f"Week no: {week_state}")
+
+        if int(week_state) >= self.episode_length - 1:
+            done = True
+            return self.state, 0, done
+        # HERE 17-12-2024
+        # subprocess.call(['python3', 'src/epi_sim.py'])
+
+        
         # Convert action to the corresponding parameters in the .json file
-
+        #APPLY ACTION
+        #TODO I think that in the first two weeks no action has to be made
+        #if week_state > 6:
+        if self.steps > 0:
+            action_values = map_to_action(data_folder, action)
+            self.config_dict["NPI"]["κ₀s"]= [float(action_values['k0'])] * self.evaluation_period
+            self.config_dict["NPI"]["ϕs"]= [float(action_values['phi'])] * self.evaluation_period
+            self.config_dict["NPI"]["δs"]= [float(action_values['delta'])] * self.evaluation_period
+            print(f"**-- selected action: {action}, maps to: {action_values}")
+       # else:
+            #TODO: What values is supposed to have action in the first two weeks?
+            #action = np.random.randint(125)
+		
         # Invoke the simulator with that .json file
 
+        config_fname = os.path.join(self.run_folder, f"config_{episode}_{week_state}.json")
+        with open(config_fname, "w") as fh:
+            json.dump(self.config_dict, fh, indent=4)
+
+        params_strn = f"-c {config_fname} -d {self.data_folder} -i {self.run_folder}"
+            
+        command = f"julia {exec_path} run {params_strn}"
+        subprocess.run(command, shell=True)
+
+        last_day = self.config_dict['simulation']['end_date']
+
         # Read the output and proceed
+        
+        # Read the population data
+        population_fname = os.path.join(self.data_folder, self.config_dict['data']['metapopulation_data_filename'])
+        population = pd.read_csv(population_fname, index_col = 'id', usecols = ["id", "Y", "M", "O"])
+        total_population = population[['Y', 'M', 'O']].sum().sum()
 
-        util = Utils()
-        cf = util.get_most_recent_folder(os.path.join(os.pardir,'runs'))
-        print(f"ID of current exp: {cf}")
-        f = open(os.path.join(os.pardir,f"runs/{cf}/config_auto_py.json"))
-        temp_conf = json.load(f)
-        week_state = util.get_week_number(temp_conf['simulation']['start_date'])
-        print(f"Week no: {week_state}")
-    # HERE 17-12-2024
-        # subprocess.call(['python3', 'src/epi_sim.py'])
-    subprocess.call(['./episim', '-e', 'MMCACovid19', 'run', '-c', 'models/mitma/config.json', '-d', 'models/mitma/', '--initial-condition', 'models/mitma/initial_conditions_MMCACovid19.nc'])
-        #run_episim()
+        # read the output observables and compute the reward
 
-        self.state = tuple(np.random.randint(dim) for dim in self.state_dims) #TODO: run simulator and get NEXT state
-        reward = np.random.randn()  # Example: Random reward #TODO: run simulator and get reward
-        done = np.random.rand() > 0.95  # Example: Randomly ends the episode #TODO: run simulator and get determine if it is week 48
+        full_xa = xr.open_dataset(os.path.join(self.run_folder, "output", "compartments_full.nc"))
+        observables_xa = xr.open_dataset(os.path.join(self.run_folder, "output", "observables.nc"))
+
+        ICU_stress = float(full_xa["HR"].sel(T=last_day).sum(['G','M']).values) + float(full_xa["HD"].sel(T=last_day).sum(['G','M']).values)
+        disease_spread = float(full_xa["I"].sel(T=last_day).sum(['G','M']).values) * 100000 / total_population
+        dis_severity = float(observables_xa["new_deaths"].sum(['G','M','T']).values)
+        R0_xa = observables_xa["R_eff"].sel(T=last_day) * population / total_population
+        R0 = float(R0_xa.sum(['G', 'M']).values)
+
+
+        # Check for errors in the simulation
+        # If the simulation fails, re-run it
+        error = False
+
+        if (ICU_stress > 10**10 or dis_severity > 10**10):
+            error = True
+            print("Simulation failed. Re-running simulation")
+            subprocess.run(command, shell=True)
+
+            full_xa = xr.open_dataset(os.path.join(self.run_folder, "output", "compartments_full.nc"))
+            observables_xa = xr.open_dataset(os.path.join(self.run_folder, "output", "observables.nc"))
+
+            ICU_stress = float(full_xa["HR"].sel(T=last_day).sum(['G','M']).values) + float(full_xa["HD"].sel(T=last_day).sum(['G','M']).values)
+            disease_spread = float(full_xa["I"].sel(T=last_day).sum(['G','M']).values) * 100000 / total_population
+            dis_severity = float(observables_xa["new_deaths"].sum(['G','M','T']).values)
+            R0_xa = observables_xa["R_eff"].sel(T=last_day) * population / total_population
+            R0 = float(R0_xa.sum(['G', 'M']).values)
+    
+
+        # Calculate new hospitalizations
+        new_hospitalizations = float(observables_xa["new_hospitalized"].sum(['G','M','T']).values)
+    
+        # Calculate the lockdown cost based on the NPI parameters
+        kappa = float(self.config_dict["NPI"]["κ₀s"][0])
+        delta = float(self.config_dict["NPI"]["δs"][0])
+        phi = float(self.config_dict["NPI"]["ϕs"][0])
+        A = 25
+        b = 0.2
+        a = 1.5
+        lockdown_cost = A*((1/(1 + math.exp(-a*(kappa - b)))) + (1/(1 + math.exp(-a*(delta - b)))) - phi)
+        
+        total_hosp = ICU_stress
+        new_deaths = dis_severity        
+        
+        #MAP OBSERVABLES TO STATE SPACE
+        ICU_stress = map_observables_to_state_space(ICU_stress, categories_dict['ICU_stress'])
+        disease_spread = map_observables_to_state_space(disease_spread, categories_dict['disease_spread'])
+        dis_severity = map_observables_to_state_space(dis_severity, categories_dict['dis_severity'])
+        R0 = map_observables_to_state_space(R0, categories_dict['R0'])
+        
+        # Update the state
+        self.state = (week_state, action, ICU_stress, disease_spread, dis_severity, R0)
+
+        # COMPUTE REWARD
+        # Lockdown term
+        lockdown_term = (-0.5 * (ICU_stress**2 + dis_severity**2) + A)*lockdown_cost
+        # Hospitalization term
+        H_term = new_hospitalizations*(ICU_stress + 1)
+
+        #REWARD 
+        reward = -(H_term + new_deaths + lockdown_term)
+
+
+        # Save reward function and the contribution of each term (H_term, new_deaths, lockdown_term) to a CSV file
+        output_path = os.path.join(self.run_folder, "reward_contributions.csv")
+
+        log_reward(output_path, episode, week_state, total_hosp, new_hospitalizations, new_deaths, H_term, new_deaths, lockdown_term, reward, action, delta, kappa, phi, error)
+
+        #self.state = tuple(np.random.randint(dim) for dim in self.state_dims) #TODO: run simulator and get NEXT state
+
+        #TODO store each value to make a plot of the reward
+        
+        #done has to be true when week 48
+        #done = np.random.rand() > 0.95  # Example: Randomly ends the episode #TODO: run simulator and get determine if it is week 48
+        done = False
+
+        new_start_day = self.config_dict['simulation']['end_date']
+        self.config_dict['simulation']['start_date'] = new_start_day
+        new_end_date = (datetime.strptime(new_start_day, "%Y-%m-%d") + timedelta(days=14)).strftime("%Y-%m-%d")
+        self.config_dict['simulation']['end_date'] = new_end_date
+
+        initial_condition_filename = os.path.join(self.base_folder, self.run_folder, "output", f"compartments_t_{new_start_day}.nc")
+        self.config_dict['data']['initial_condition_filename'] = initial_condition_filename
+
+        self.steps = self.steps + 1
+ 
+        #cf = util.get_most_recent_folder(os.path.join("","test"))
+        #print(f"ID of current exp: {cf}")
+        #f = open(os.path.join(os.pardir,f"runs/{cf}/config_auto_py.json"))
+
         return self.state, reward, done
 
-    def render(self):
+    def render(self, episode):
         """
         Renders the current state of the environment.
         """
@@ -156,7 +334,7 @@ class RLAgent:
         else:
             return np.argmax(self.q_table[state])  # Exploit
 
-    def learn(self, state, action, reward, next_state, done):
+    def learn(self, state, action, reward, next_state, run_folder, done):
         """
         Updates the Q-table using the Temporal Difference (TD) method.
         Args:
@@ -164,17 +342,24 @@ class RLAgent:
             action (int): Action taken.
             reward (float): Reward received.
             next_state (numpy array): Next state.
+            run_folder (str): Folder to save the Q-table.
             done (bool): Whether the episode ended.
         """
         # discretized_state = self.discretize_state(state)
         # discretized_next_state = self.discretize_state(next_state)
 
         # TD Target
-        max_next_q = np.max(self.q_table[next_state]) if not done else 0
+        try:
+            max_next_q = np.max(self.q_table[next_state]) if not done else 0
+        except IndexError:
+            max_next_q = 0
         td_target = reward + self.gamma * max_next_q
 
         # TD Update
         self.q_table[state][action] += self.alpha * (td_target - self.q_table[state][action])
+        
+        with open(os.path.join(run_folder, "q_table.pkl"), "wb") as f:
+            pickle.dump(self.q_table, f)
 
     def decay_epsilon(self):
         """
@@ -184,23 +369,28 @@ class RLAgent:
 
 
 # Step 3: Training Loop
-def train_agent(env, agent, episodes=100):
+def train_agent(env, agent, episodes=2):
+    rewards_log_file = os.path.join(env.run_folder, "episode_rewards.csv")
+
     for episode in range(episodes):
-        state = env.reset()
+        state = env.reset(episode)
         total_reward = 0
         done = False
 
         while not done:
-            env.render()
+            env.render(episode)
             action = agent.select_action(state)
-            next_state, reward, done = env.step(action)
-            agent.learn(state, action, reward, next_state, done)
+            next_state, reward, done = env.step(action, episode)
+            print(f"**-- Selected action: {action}, Next state: {next_state}, Reward: {reward}")
+            agent.learn(state, action, reward, next_state, env.run_folder, done)
             state = next_state
             total_reward += reward
-
+            print(f"**** Episode {episode + 1} (Step {env.steps}): Reward = {reward:.2f}, Total Reward = {total_reward:.2f}, Epsilon = {agent.epsilon:.3f}")
+            
         agent.decay_epsilon()
-        print(f"Episode {episode + 1}: Total Reward = {total_reward:.2f}, Epsilon = {agent.epsilon:.3f}")
+        print(f"**** Episode {episode + 1}: Total Reward = {total_reward:.5f}, Epsilon = {agent.epsilon:.3f}")
 
+        log_episode_reward(rewards_log_file, episode + 1, total_reward)
 
 class Utils:
     def get_week_number(self, date_str):
@@ -269,8 +459,68 @@ class Utils:
             return None
 
 
+
+
+def create_parser():
+    parser = argparse.ArgumentParser(description=f"Run the EpiSim simulator.")
+    parser.add_argument("--experiment_id", action="store", dest="experiment_id", help="ID of the experiment")
+    parser.add_argument("--config", action="store", required=True, dest="config_file", help="Path to the configuration file")
+    parser.add_argument("--data", action="store", required=True, dest="data_folder", help="Folder where the data is stored")
+    parser.add_argument("--period", action="store", dest="evaluation_period", help="Evaluation period", type=int, default=14)
+    parser.add_argument("--episodes", action="store", dest="episodes", help="Number of episodes to run", type=int, default=10)
+    parser.add_argument("--episode_length", action="store", dest="episode_length", help="Episode length", type=int, default=48)
+    return parser
+
+
 # Initialize and run
+
 if __name__ == "__main__":
-    env = CustomEnv()
+    global exec_path
+
+    parser = create_parser()
+    args = parser.parse_args()
+
+    base_folder = os.path.abspath(os.curdir)
+    exec_path = os.path.join(base_folder, "model/EpiSim.jl/src/run.jl")
+
+    experiment_id = args.experiment_id
+    data_folder = args.data_folder
+    config_file = args.config_file
+    evaluation_period = args.evaluation_period
+    episodes = args.episodes
+    episode_length = args.episode_length
+
+    assert evaluation_period > 0, "The evaluation period must be a positive integer."
+    assert evaluation_period <= 336, "The evaluation period must be less than or equal to 48 weeks."
+    assert os.path.exists(config_file), "The configuration file does not exist."
+    assert os.path.exists(data_folder), "The data folder does not exist."
+
+    with open(config_file, 'r') as f:
+        config_dict = json.load(f)
+
+    #This can be done in a function
+
+    config_dict["simulation"]["save_time_step"] = -1
+    config_dict["simulation"]["start_date"] = "2020-02-09"
+    end_date = (datetime.strptime(config_dict["simulation"]["start_date"], "%Y-%m-%d") + timedelta(days=evaluation_period)).strftime("%Y-%m-%d")
+    config_dict["simulation"]["end_date"] = end_date
+    
+    config_dict["NPI"]["κ₀s"]= [0] * (evaluation_period + 1)
+    config_dict["NPI"]["ϕs"]= [0.2] * (evaluation_period + 1)
+    config_dict["NPI"]["δs"]= [0] * (evaluation_period + 1)
+    config_dict["NPI"]["tᶜs"]= list(range(1, evaluation_period + 2))
+
+    categorization_fname = os.path.join(data_folder,"observables_categories.json")
+    with open(categorization_fname, "r") as f:
+            categories_dict = json.load(f)
+
+    exp_folder = os.path.join("runs", experiment_id)
+    #Delete the folder if it exists
+    if os.path.exists(exp_folder):
+        shutil.rmtree(exp_folder)
+    # Create the experiment folder
+    os.makedirs(exp_folder, exist_ok=True)
+
+    env = CustomEnv(base_folder=base_folder, run_folder=exp_folder, data_folder=data_folder, config_dict=config_dict, categories_dict=categories_dict, evaluation_period=evaluation_period, episode_length=episode_length, config_file=config_file)
     agent = RLAgent(state_dims=env.state_dims, action_space=env.action_space)
-    train_agent(env, agent, episodes=1000)
+    train_agent(env, agent, episodes=episodes)

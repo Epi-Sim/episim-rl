@@ -1,7 +1,7 @@
 # Custom
 
 model/EpiSim.jl
-
+runs/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
