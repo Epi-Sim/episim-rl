@@ -112,25 +112,32 @@ class CustomEnv:
 
         self.steps = 0
 
-        utils = Utils
+        initial_conditions = ["initial_conditions-good.nc", "initial_conditions-med.nc", "initial_conditions-bad.nc"]
 
-        week_state = 5
-        print(f"Resetting ... week no: {week_state}")
+        utils = Utils()        
 
-        self.state = (week_state, 0, 0, 0, 0, 0)
-        with open(self.config_file, 'r') as f:
+        config_file_template = os.path.join(self.run_folder, "config_template.json")
+
+        with open(config_file_template, 'r') as f:
             config_dict_up = json.load(f)
-            # config_dict['simulation']['start_date'] = config_dict_up['simulation']['start_date']
-            # TODO
-            self.config_dict['simulation']['start_date'] = "2020-02-09"
-            new_start_day = self.config_dict['simulation']['start_date']
-            new_end_date = (datetime.strptime(new_start_day, "%Y-%m-%d") + timedelta(days=self.evaluation_period)).strftime("%Y-%m-%d")
-            self.config_dict['simulation']['end_date'] = new_end_date
-            self.config_dict["NPI"]["κ₀s"]= [0] * (self.evaluation_period + 1)
-            self.config_dict["NPI"]["ϕs"]= [0.2] * (self.evaluation_period + 1)
-            self.config_dict["NPI"]["δs"]= [0] * (self.evaluation_period + 1)
-            self.config_dict["NPI"]["tᶜs"]= list(range(1, self.evaluation_period + 2))
-            self.config_dict['data']['initial_condition_filename'] = config_dict_up['data']['initial_condition_filename']
+
+        new_start_date = config_dict_up['simulation']['start_date']
+        new_end_date = (datetime.strptime(new_start_date, "%Y-%m-%d") + timedelta(days=self.evaluation_period)).strftime("%Y-%m-%d")
+        self.config_dict['simulation']['start_date'] = new_start_date
+        self.config_dict['simulation']['end_date'] = new_end_date
+
+        self.config_dict["NPI"]["κ₀s"]= [0] * (self.evaluation_period + 1)
+        self.config_dict["NPI"]["δs"]= [0] * (self.evaluation_period + 1)
+        phi = config_dict_up["NPI"]["ϕs"]
+        self.config_dict["NPI"]["ϕs"]= phi * (self.evaluation_period + 1)
+        self.config_dict["NPI"]["tᶜs"]= list(range(1, self.evaluation_period + 2))
+
+        rand = np.random.randint(0, len(initial_conditions))
+        self.config_dict['data']['initial_condition_filename'] = initial_conditions[rand]
+
+        week_state = utils.get_week_number(self.config_dict['simulation']['start_date']) - 1
+        print(f"Resetting ... week no: {week_state}")
+        self.state = (week_state, 0, 0, 0, 0, 0)
 
         return self.state
 
@@ -493,24 +500,6 @@ if __name__ == "__main__":
     assert os.path.exists(config_file), "The configuration file does not exist."
     assert os.path.exists(data_folder), "The data folder does not exist."
 
-    with open(config_file, 'r') as f:
-        config_dict = json.load(f)
-
-    #This can be done in a function
-
-    config_dict["simulation"]["save_time_step"] = -1
-    config_dict["simulation"]["start_date"] = "2020-02-09"
-    end_date = (datetime.strptime(config_dict["simulation"]["start_date"], "%Y-%m-%d") + timedelta(days=evaluation_period)).strftime("%Y-%m-%d")
-    config_dict["simulation"]["end_date"] = end_date
-    
-    config_dict["NPI"]["κ₀s"]= [0] * (evaluation_period + 1)
-    config_dict["NPI"]["ϕs"]= [0.2] * (evaluation_period + 1)
-    config_dict["NPI"]["δs"]= [0] * (evaluation_period + 1)
-    config_dict["NPI"]["tᶜs"]= list(range(1, evaluation_period + 2))
-
-    categorization_fname = os.path.join(data_folder,"observables_categories.json")
-    with open(categorization_fname, "r") as f:
-            categories_dict = json.load(f)
 
     exp_folder = os.path.join("runs", experiment_id)
     #Delete the folder if it exists
