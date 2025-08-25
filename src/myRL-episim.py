@@ -27,7 +27,7 @@ def log_episode_reward(output_path, episode_number, total_reward):
             f.write("episode,total_reward\n")  # Header
         f.write(f"{episode_number},{total_reward}\n")
 
-def log_reward(output_path, episode_number, week, total_hosp, new_hosp, new_deaths, H_term, D_term, lockdown_term, reward, action, delta, k0, phi, error):
+def log_reward(output_path, episode_number, week, total_hosp, new_hosp, new_deaths, H_term, D_term, lockdown_term, reward, action, delta, k0, error):
     """
     Logs in the detail the reward function of an episode to a CSV file.
     Creates the file if it doesn't exist.
@@ -51,8 +51,8 @@ def log_reward(output_path, episode_number, week, total_hosp, new_hosp, new_deat
     log_exists = os.path.exists(output_path)
     with open(output_path, 'a') as f:
         if not log_exists:
-            f.write("episode,week,Total_hosp,new_hosp,new_deaths,H_term,D_term,Lockdown_term,reward,action,delta,k0,phi,error\n")  # Header
-        f.write(f"{episode_number},{week},{total_hosp},{new_hosp},{new_deaths},{H_term},{D_term},{lockdown_term},{reward},{action},{delta},{k0},{phi},{error}\n")
+            f.write("episode,week,Total_hosp,new_hosp,new_deaths,H_term,D_term,Lockdown_term,reward,action,delta,k0,error\n")  # Header
+        f.write(f"{episode_number},{week},{total_hosp},{new_hosp},{new_deaths},{H_term},{D_term},{lockdown_term},{reward},{action},{delta},{k0},{error}\n")
 
 
 #function that maps values of the observables to the state space 1-5 or 0-1
@@ -93,9 +93,9 @@ class CustomEnv:
         self.config_dict = config_dict
         self.categories_dict = categories_dict
         self.evaluation_period = evaluation_period
-        self.state_dims = (48, 125, 5, 5, 5, 2)
-        self.state_space = 6  # State is a vector of size six [weeks(1-48), previous_actions(1-125), ICU_stress(1-5), disease_spread(1-5), dis_severity(1-5), R0(0/1)]
-        self.action_space = 125  # 125 possible actions [\Phi0(0,0.25,0.5,0.75,1), delta(0,0.25,0.5,0.75,1), k0(0,0.25,0.5,0.75,1)]
+        self.state_dims = (48, 121, 5, 5, 5, 2)
+        self.state_space = 6  # State is a vector of size six [weeks(1-48), previous_actions(0-120), ICU_stress(0-4), disease_spread(0-4), dis_severity(0-4), R0(0/1)]
+        self.action_space = 121  # 121 possible actions [delta(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1), k0(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1)]
         self.state = None
         self.steps = 0
         self.episode_length = episode_length
@@ -168,7 +168,6 @@ class CustomEnv:
         if self.steps > 0:
             action_values = map_to_action(data_folder, action)
             self.config_dict["NPI"]["κ₀s"]= [float(action_values['k0'])] * self.evaluation_period
-            self.config_dict["NPI"]["ϕs"]= [float(action_values['phi'])] * self.evaluation_period
             self.config_dict["NPI"]["δs"]= [float(action_values['delta'])] * self.evaluation_period
             print(f"**-- selected action: {action}, maps to: {action_values}")
        # else:
@@ -232,11 +231,10 @@ class CustomEnv:
         # Calculate the lockdown cost based on the NPI parameters
         kappa = float(self.config_dict["NPI"]["κ₀s"][0])
         delta = float(self.config_dict["NPI"]["δs"][0])
-        phi = float(self.config_dict["NPI"]["ϕs"][0])
         A = 25
         b = 0.2
         a = 1.5
-        lockdown_cost = A*((1/(1 + math.exp(-a*(kappa - b)))) + (1/(1 + math.exp(-a*(delta - b)))) - phi)
+        lockdown_cost = A*(1/(1 + math.exp(-a*(kappa - b)))) + (1/(1 + math.exp(-a*(delta - b))))
         
         total_hosp = ICU_stress
         new_deaths = dis_severity        
@@ -263,7 +261,7 @@ class CustomEnv:
         # Save reward function and the contribution of each term (H_term, new_deaths, lockdown_term) to a CSV file
         output_path = os.path.join(self.run_folder, "reward_contributions.csv")
 
-        log_reward(output_path, episode, week_state, total_hosp, new_hospitalizations, new_deaths, H_term, new_deaths, lockdown_term, reward, action, delta, kappa, phi, error)
+        log_reward(output_path, episode, week_state, total_hosp, new_hospitalizations, new_deaths, H_term, new_deaths, lockdown_term, reward, action, delta, kappa, error)
 
         #self.state = tuple(np.random.randint(dim) for dim in self.state_dims) #TODO: run simulator and get NEXT state
 
