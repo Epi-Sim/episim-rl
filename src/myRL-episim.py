@@ -519,6 +519,25 @@ if __name__ == "__main__":
     # Create the experiment folder
     os.makedirs(exp_folder, exist_ok=True)
 
+    #Copy the data folder to the experiment folder
+    data_exp_folder = os.path.join(exp_folder, "data")
+    shutil.copytree(data_folder, data_exp_folder)
+    data_folder = data_exp_folder
+
+    config_file_template = os.path.join(exp_folder, "config_template.json")
+    shutil.copy(config_file, config_file_template)
+    config_file = config_file_template
+
+
+    with open(config_file, 'r') as f:
+        config_dict = json.load(f)
+
+    categorization_fname = os.path.join(data_folder,"observables_categories.json")
+    with open(categorization_fname, "r") as f:
+            categories_dict = json.load(f)
+
+    
+
     env = CustomEnv(base_folder=base_folder, run_folder=exp_folder, data_folder=data_folder, config_dict=config_dict, categories_dict=categories_dict, evaluation_period=evaluation_period, episode_length=episode_length, config_file=config_file)
     agent = RLAgent(state_dims=env.state_dims, action_space=env.action_space)
     train_agent(env, agent, episodes=episodes)
