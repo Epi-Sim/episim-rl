@@ -167,6 +167,56 @@ class CustomEnv:
         # HERE 17-12-2024
         # subprocess.call(['python3', 'src/epi_sim.py'])
 
+
+        # Read the population data
+        population_fname = os.path.join(self.data_folder, self.config_dict['data']['metapopulation_data_filename'])
+        population = pd.read_csv(population_fname, index_col = 'id', usecols = ["id", "Y", "M", "O"])
+        total_population = population[['Y', 'M', 'O']].sum().sum()
+
+        if self.steps == 0:
+            initial_conditions = self.config_dict['data']['initial_condition_filename']
+            initial_observables = xr.open_dataset(os.path.join(self.data_folder, initial_conditions))
+
+            ICU_stress = (float(initial_observables["HR"].sum(["G","M"]).values) +
+                          float(initial_observables["HD"].sum(["G","M"]).values))
+            disease_spread = float(initial_observables["I"].sum(['G','M']).values) * 100000 / total_population
+            dis_severity = float(initial_observables["D"].sum(["G", "M"]).values)
+
+            new_hospitalizations = ICU_stress
+
+            kappa = float(self.config_dict["NPI"]["κ₀s"][0])
+            delta = float(self.config_dict["NPI"]["δs"][0])
+            A = 25
+            b = 0.2
+            a = 1.5
+            lockdown_cost = A*(1/(1 + math.exp(-a*(kappa - b)))) + (1/(1 + math.exp(-a*(delta - b))))
+
+            total_hosp = ICU_stress
+            new_deaths = dis_severity
+
+            ICU_stress = map_observables_to_state_space(ICU_stress, categories_dict['ICU_stress'])
+            disease_spread = map_observables_to_state_space(disease_spread, categories_dict['disease_spread'])
+            dis_severity = map_observables_to_state_space(dis_severity, categories_dict['dis_severity'])
+            R0 = 1
+
+            # Update the state
+            self.state = (week_state, action, ICU_stress, disease_spread, dis_severity, R0)
+
+            # COMPUTE REWARD
+            # Lockdown term
+            lockdown_term = (-0.5 * (ICU_stress**2 + dis_severity**2) + A)*lockdown_cost
+            # Hospitalization term
+            H_term = new_hospitalizations*(ICU_stress + 1)
+
+            #REWARD 
+            reward = -(H_term + new_deaths + lockdown_term)
+            print(f"Initial step reward: {reward}")
+            done = False
+            self.steps = self.steps + 1
+
+            return self.state, reward, done
+
+
         
         # Convert action to the corresponding parameters in the .json file
         #APPLY ACTION
@@ -191,15 +241,12 @@ class CustomEnv:
             
         command = f"julia {exec_path} run {params_strn}"
         subprocess.run(command, shell=True)
-
+ 
         last_day = self.config_dict['simulation']['end_date']
 
         # Read the output and proceed
         
-        # Read the population data
-        population_fname = os.path.join(self.data_folder, self.config_dict['data']['metapopulation_data_filename'])
-        population = pd.read_csv(population_fname, index_col = 'id', usecols = ["id", "Y", "M", "O"])
-        total_population = population[['Y', 'M', 'O']].sum().sum()
+        
 
         # read the output observables and compute the reward
 
