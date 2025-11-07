@@ -27,7 +27,7 @@ def log_episode_reward(output_path, episode_number, total_reward):
             f.write("episode,total_reward\n")  # Header
         f.write(f"{episode_number},{total_reward}\n")
 
-def log_reward(output_path, episode_number, week, total_hosp, new_hosp, new_deaths, H_term, D_term, lockdown_term, reward, action, delta, k0, phi, error):
+def log_reward(output_path, episode_number, week, total_hosp, new_hosp, new_deaths, H_term, D_term, lockdown_term, reward, action, delta, k0, error):
     """
     Logs in the detail the reward function of an episode to a CSV file.
     Creates the file if it doesn't exist.
@@ -51,8 +51,8 @@ def log_reward(output_path, episode_number, week, total_hosp, new_hosp, new_deat
     log_exists = os.path.exists(output_path)
     with open(output_path, 'a') as f:
         if not log_exists:
-            f.write("episode,week,Total_hosp,new_hosp,new_deaths,H_term,D_term,Lockdown_term,reward,action,delta,k0,phi,error\n")  # Header
-        f.write(f"{episode_number},{week},{total_hosp},{new_hosp},{new_deaths},{H_term},{D_term},{lockdown_term},{reward},{action},{delta},{k0},{phi},{error}\n")
+            f.write("episode,week,Total_hosp,new_hosp,new_deaths,H_term,D_term,Lockdown_term,reward,action,delta,k0,error\n")  # Header
+        f.write(f"{episode_number},{week},{total_hosp},{new_hosp},{new_deaths},{H_term},{D_term},{lockdown_term},{reward},{action},{delta},{k0},{error}\n")
 
 
 #function that maps values of the observables to the state space 1-5 or 0-1
@@ -93,9 +93,9 @@ class CustomEnv:
         self.config_dict = config_dict
         self.categories_dict = categories_dict
         self.evaluation_period = evaluation_period
-        self.state_dims = (48, 125, 5, 5, 5, 2)
-        self.state_space = 6  # State is a vector of size six [weeks(1-48), previous_actions(1-125), ICU_stress(1-5), disease_spread(1-5), dis_severity(1-5), R0(0/1)]
-        self.action_space = 125  # 125 possible actions [\Phi0(0,0.25,0.5,0.75,1), delta(0,0.25,0.5,0.75,1), k0(0,0.25,0.5,0.75,1)]
+        self.state_dims = (48, 121, 5, 5, 5, 2)
+        self.state_space = 6  # State is a vector of size six [weeks(1-48), previous_actions(0-120), ICU_stress(0-4), disease_spread(0-4), dis_severity(0-4), R0(0/1)]
+        self.action_space = 121  # 121 possible actions [delta(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1), k0(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1)]
         self.state = None
         self.steps = 0
         self.episode_length = episode_length
@@ -112,25 +112,32 @@ class CustomEnv:
 
         self.steps = 0
 
-        utils = Utils
+        initial_conditions = ["initial_conditions-good.nc", "initial_conditions-med.nc", "initial_conditions-bad.nc"]
 
-        week_state = 5
-        print(f"Resetting ... week no: {week_state}")
+        utils = Utils()        
 
-        self.state = (week_state, 0, 0, 0, 0, 0)
-        with open(self.config_file, 'r') as f:
+        config_file_template = os.path.join(self.run_folder, "config_template.json")
+
+        with open(config_file_template, 'r') as f:
             config_dict_up = json.load(f)
-            # config_dict['simulation']['start_date'] = config_dict_up['simulation']['start_date']
-            # TODO
-            self.config_dict['simulation']['start_date'] = "2020-02-09"
-            new_start_day = self.config_dict['simulation']['start_date']
-            new_end_date = (datetime.strptime(new_start_day, "%Y-%m-%d") + timedelta(days=self.evaluation_period)).strftime("%Y-%m-%d")
-            self.config_dict['simulation']['end_date'] = new_end_date
-            self.config_dict["NPI"]["κ₀s"]= [0] * (self.evaluation_period + 1)
-            self.config_dict["NPI"]["ϕs"]= [0.2] * (self.evaluation_period + 1)
-            self.config_dict["NPI"]["δs"]= [0] * (self.evaluation_period + 1)
-            self.config_dict["NPI"]["tᶜs"]= list(range(1, self.evaluation_period + 2))
-            self.config_dict['data']['initial_condition_filename'] = config_dict_up['data']['initial_condition_filename']
+
+        new_start_date = config_dict_up['simulation']['start_date']
+        new_end_date = (datetime.strptime(new_start_date, "%Y-%m-%d") + timedelta(days=self.evaluation_period)).strftime("%Y-%m-%d")
+        self.config_dict['simulation']['start_date'] = new_start_date
+        self.config_dict['simulation']['end_date'] = new_end_date
+
+        self.config_dict["NPI"]["κ₀s"]= [0] * (self.evaluation_period + 1)
+        self.config_dict["NPI"]["δs"]= [0] * (self.evaluation_period + 1)
+        phi = config_dict_up["NPI"]["ϕs"]
+        self.config_dict["NPI"]["ϕs"]= phi * (self.evaluation_period + 1)
+        self.config_dict["NPI"]["tᶜs"]= list(range(1, self.evaluation_period + 2))
+
+        rand = np.random.randint(0, len(initial_conditions))
+        self.config_dict['data']['initial_condition_filename'] = initial_conditions[rand]
+
+        week_state = utils.get_week_number(self.config_dict['simulation']['start_date']) - 1
+        print(f"Resetting ... week no: {week_state}")
+        self.state = (week_state, 0, 0, 0, 0, 0)
 
         return self.state
 
@@ -160,6 +167,56 @@ class CustomEnv:
         # HERE 17-12-2024
         # subprocess.call(['python3', 'src/epi_sim.py'])
 
+
+        # Read the population data
+        population_fname = os.path.join(self.data_folder, self.config_dict['data']['metapopulation_data_filename'])
+        population = pd.read_csv(population_fname, index_col = 'id', usecols = ["id", "Y", "M", "O"])
+        total_population = population[['Y', 'M', 'O']].sum().sum()
+
+        if self.steps == 0:
+            initial_conditions = self.config_dict['data']['initial_condition_filename']
+            initial_observables = xr.open_dataset(os.path.join(self.data_folder, initial_conditions))
+
+            ICU_stress = (float(initial_observables["HR"].sum(["G","M"]).values) +
+                          float(initial_observables["HD"].sum(["G","M"]).values))
+            disease_spread = float(initial_observables["I"].sum(['G','M']).values) * 100000 / total_population
+            dis_severity = float(initial_observables["D"].sum(["G", "M"]).values)
+
+            new_hospitalizations = ICU_stress
+
+            kappa = float(self.config_dict["NPI"]["κ₀s"][0])
+            delta = float(self.config_dict["NPI"]["δs"][0])
+            A = 25
+            b = 0.2
+            a = 1.5
+            lockdown_cost = A*(1/(1 + math.exp(-a*(kappa - b)))) + (1/(1 + math.exp(-a*(delta - b))))
+
+            total_hosp = ICU_stress
+            new_deaths = dis_severity
+
+            ICU_stress = map_observables_to_state_space(ICU_stress, categories_dict['ICU_stress'])
+            disease_spread = map_observables_to_state_space(disease_spread, categories_dict['disease_spread'])
+            dis_severity = map_observables_to_state_space(dis_severity, categories_dict['dis_severity'])
+            R0 = 1
+
+            # Update the state
+            self.state = (week_state, action, ICU_stress, disease_spread, dis_severity, R0)
+
+            # COMPUTE REWARD
+            # Lockdown term
+            lockdown_term = (-0.5 * (ICU_stress**2 + dis_severity**2) + A)*lockdown_cost
+            # Hospitalization term
+            H_term = new_hospitalizations*(ICU_stress + 1)
+
+            #REWARD 
+            reward = -(H_term + new_deaths + lockdown_term)
+            print(f"Initial step reward: {reward}")
+            done = False
+            self.steps = self.steps + 1
+
+            return self.state, reward, done
+
+
         
         # Convert action to the corresponding parameters in the .json file
         #APPLY ACTION
@@ -168,7 +225,6 @@ class CustomEnv:
         if self.steps > 0:
             action_values = map_to_action(data_folder, action)
             self.config_dict["NPI"]["κ₀s"]= [float(action_values['k0'])] * self.evaluation_period
-            self.config_dict["NPI"]["ϕs"]= [float(action_values['phi'])] * self.evaluation_period
             self.config_dict["NPI"]["δs"]= [float(action_values['delta'])] * self.evaluation_period
             print(f"**-- selected action: {action}, maps to: {action_values}")
        # else:
@@ -185,15 +241,12 @@ class CustomEnv:
             
         command = f"julia {exec_path} run {params_strn}"
         subprocess.run(command, shell=True)
-
+ 
         last_day = self.config_dict['simulation']['end_date']
 
         # Read the output and proceed
         
-        # Read the population data
-        population_fname = os.path.join(self.data_folder, self.config_dict['data']['metapopulation_data_filename'])
-        population = pd.read_csv(population_fname, index_col = 'id', usecols = ["id", "Y", "M", "O"])
-        total_population = population[['Y', 'M', 'O']].sum().sum()
+        
 
         # read the output observables and compute the reward
 
@@ -232,11 +285,10 @@ class CustomEnv:
         # Calculate the lockdown cost based on the NPI parameters
         kappa = float(self.config_dict["NPI"]["κ₀s"][0])
         delta = float(self.config_dict["NPI"]["δs"][0])
-        phi = float(self.config_dict["NPI"]["ϕs"][0])
         A = 25
         b = 0.2
         a = 1.5
-        lockdown_cost = A*((1/(1 + math.exp(-a*(kappa - b)))) + (1/(1 + math.exp(-a*(delta - b)))) - phi)
+        lockdown_cost = A*(1/(1 + math.exp(-a*(kappa - b)))) + (1/(1 + math.exp(-a*(delta - b))))
         
         total_hosp = ICU_stress
         new_deaths = dis_severity        
@@ -263,7 +315,7 @@ class CustomEnv:
         # Save reward function and the contribution of each term (H_term, new_deaths, lockdown_term) to a CSV file
         output_path = os.path.join(self.run_folder, "reward_contributions.csv")
 
-        log_reward(output_path, episode, week_state, total_hosp, new_hospitalizations, new_deaths, H_term, new_deaths, lockdown_term, reward, action, delta, kappa, phi, error)
+        log_reward(output_path, episode, week_state, total_hosp, new_hospitalizations, new_deaths, H_term, new_deaths, lockdown_term, reward, action, delta, kappa, error)
 
         #self.state = tuple(np.random.randint(dim) for dim in self.state_dims) #TODO: run simulator and get NEXT state
 
@@ -495,24 +547,6 @@ if __name__ == "__main__":
     assert os.path.exists(config_file), "The configuration file does not exist."
     assert os.path.exists(data_folder), "The data folder does not exist."
 
-    with open(config_file, 'r') as f:
-        config_dict = json.load(f)
-
-    #This can be done in a function
-
-    config_dict["simulation"]["save_time_step"] = -1
-    config_dict["simulation"]["start_date"] = "2020-02-09"
-    end_date = (datetime.strptime(config_dict["simulation"]["start_date"], "%Y-%m-%d") + timedelta(days=evaluation_period)).strftime("%Y-%m-%d")
-    config_dict["simulation"]["end_date"] = end_date
-    
-    config_dict["NPI"]["κ₀s"]= [0] * (evaluation_period + 1)
-    config_dict["NPI"]["ϕs"]= [0.2] * (evaluation_period + 1)
-    config_dict["NPI"]["δs"]= [0] * (evaluation_period + 1)
-    config_dict["NPI"]["tᶜs"]= list(range(1, evaluation_period + 2))
-
-    categorization_fname = os.path.join(data_folder,"observables_categories.json")
-    with open(categorization_fname, "r") as f:
-            categories_dict = json.load(f)
 
     exp_folder = os.path.join("runs", experiment_id)
     #Delete the folder if it exists
@@ -520,6 +554,25 @@ if __name__ == "__main__":
         shutil.rmtree(exp_folder)
     # Create the experiment folder
     os.makedirs(exp_folder, exist_ok=True)
+
+    #Copy the data folder to the experiment folder
+    data_exp_folder = os.path.join(exp_folder, "data")
+    shutil.copytree(data_folder, data_exp_folder)
+    data_folder = data_exp_folder
+
+    config_file_template = os.path.join(exp_folder, "config_template.json")
+    shutil.copy(config_file, config_file_template)
+    config_file = config_file_template
+
+
+    with open(config_file, 'r') as f:
+        config_dict = json.load(f)
+
+    categorization_fname = os.path.join(data_folder,"observables_categories.json")
+    with open(categorization_fname, "r") as f:
+            categories_dict = json.load(f)
+
+    
 
     env = CustomEnv(base_folder=base_folder, run_folder=exp_folder, data_folder=data_folder, config_dict=config_dict, categories_dict=categories_dict, evaluation_period=evaluation_period, episode_length=episode_length, config_file=config_file)
     agent = RLAgent(state_dims=env.state_dims, action_space=env.action_space)
